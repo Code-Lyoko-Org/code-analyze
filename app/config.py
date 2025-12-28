@@ -60,9 +60,10 @@ class Settings(BaseSettings):
         "target",  # Rust/Java
     ]
 
-    # Embedding settings
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    # Code Size Limits
+    max_file_size_bytes: int = 500 * 1024  # 500KB, skip larger files
+    max_block_chars: int = 1000            # Max chars per code block
+    max_llm_context_chars: int = 50000     # Max chars for LLM prompt
 
     # Celery worker settings
     celery_concurrency: int = 4

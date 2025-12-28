@@ -350,9 +350,20 @@ class CodeParser:
             List of all CodeDefinition objects
         """
         all_definitions = []
+        max_file_size = self.settings.max_file_size_bytes
         
         for file_path in file_paths:
             full_path = os.path.join(project_root, file_path)
+            
+            # P0: Skip files larger than max_file_size_bytes
+            try:
+                file_size = os.path.getsize(full_path)
+                if file_size > max_file_size:
+                    print(f"Skipping large file ({file_size} bytes): {file_path}")
+                    continue
+            except OSError:
+                continue
+            
             try:
                 with open(full_path, "r", encoding="utf-8") as f:
                     content = f.read()
@@ -368,20 +379,21 @@ class CodeParser:
         self,
         definitions: List[CodeDefinition],
         include_content: bool = True,
-        max_content_lines: int = 30,
     ) -> str:
         """Generate a structured text representation of code definitions.
         
         Args:
             definitions: List of CodeDefinition objects
             include_content: Whether to include full method/class bodies
-            max_content_lines: Maximum lines of content to include per definition
             
         Returns:
-            Formatted string representation with code bodies
+            Formatted string representation with code bodies (within token budget)
         """
         if not definitions:
             return "No code definitions found."
+        
+        max_block_chars = self.settings.max_block_chars
+        max_context_chars = self.settings.max_llm_context_chars
         
         # Group by file
         by_file: Dict[str, List[CodeDefinition]] = {}
@@ -391,6 +403,9 @@ class CodeParser:
             by_file[d.file_path].append(d)
         
         output_lines = []
+        total_chars = 0
+        budget_exceeded = False
+        
         for file_path in sorted(by_file.keys()):
             output_lines.append(f"\n## {file_path}")
             
@@ -399,22 +414,27 @@ class CodeParser:
                     f"\n### [{d.definition_type}] {d.name} (lines {d.start_line}-{d.end_line})"
                 )
                 
+                # Check if we've exceeded the budget
+                if budget_exceeded or total_chars > max_context_chars * 0.9:
+                    # Only show signature when over budget
+                    if d.signature:
+                        output_lines.append(f"Signature: {d.signature}")
+                    budget_exceeded = True
+                    continue
+                
                 if include_content and d.content:
-                    # Include the actual code content
-                    content_lines = d.content.splitlines()
-                    if len(content_lines) > max_content_lines:
-                        # Truncate long content
-                        truncated = content_lines[:max_content_lines]
-                        truncated.append(f"    // ... ({len(content_lines) - max_content_lines} more lines)")
-                        code_block = "\n".join(truncated)
-                    else:
-                        code_block = d.content
+                    # P0: Limit code block to max_block_chars
+                    content = d.content
+                    if len(content) > max_block_chars:
+                        # Smart truncate: keep beginning and end
+                        half = max_block_chars // 2
+                        content = content[:half] + "\n    // ... 中间代码省略 ...\n" + content[-half:]
                     
                     output_lines.append("```")
-                    output_lines.append(code_block)
+                    output_lines.append(content)
                     output_lines.append("```")
+                    total_chars += len(content)
                 else:
-                    # Fallback to signature only
                     if d.signature:
                         output_lines.append(f"Signature: {d.signature}")
         
