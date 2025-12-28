@@ -1,4 +1,4 @@
-.PHONY: install dev celery test clean docker-deps help
+.PHONY: install dev celery test clean docker-deps clear-cache help
 
 # Default target
 help:
@@ -8,6 +8,7 @@ help:
 	@echo "  make celery       - Start Celery worker"
 	@echo "  make test         - Run tests"
 	@echo "  make docker-deps  - Start Redis and Qdrant with Docker"
+	@echo "  make clear-cache  - Clear Redis cache and Qdrant collection"
 	@echo "  make clean        - Clean up cache files"
 
 # Install dependencies
@@ -36,6 +37,12 @@ docker-deps:
 docker-stop:
 	-docker stop qdrant my-redis
 	-docker rm qdrant my-redis
+
+# Clear Redis cache and Qdrant collection
+clear-cache:
+	@docker exec my-redis redis-cli FLUSHDB
+	@curl -s -X DELETE http://localhost:6333/collections/code_blocks > /dev/null
+	@echo "Cache cleared: Redis flushed, Qdrant collection deleted"
 
 # Clean up
 clean:

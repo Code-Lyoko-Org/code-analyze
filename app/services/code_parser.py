@@ -165,9 +165,10 @@ class CodeParser:
         parser = parser_info["parser"]
         lang = parser_info["language"]
         
-        # Parse the code
+        # Parse the code (use encode to handle multi-byte chars correctly)
+        content_bytes = content.encode("utf-8")
         try:
-            tree = parser.parse(bytes(content, "utf-8"))
+            tree = parser.parse(content_bytes)
         except Exception as e:
             print(f"Failed to parse {file_path}: {e}")
             return []
@@ -233,14 +234,15 @@ class CodeParser:
                     for name_node in captures[name_capture_key]:
                         if (name_node.start_byte >= node.start_byte and 
                             name_node.end_byte <= node.end_byte):
-                            name = content[name_node.start_byte:name_node.end_byte]
+                            # Use node.text for correct byte handling
+                            name = name_node.text.decode("utf-8")
                             break
                 
                 if not name:
                     # Fallback: try to find identifier in children
                     for child in node.children:
                         if child.type in ("identifier", "type_identifier", "property_identifier"):
-                            name = content[child.start_byte:child.end_byte]
+                            name = child.text.decode("utf-8")
                             break
                 
                 if not name:
@@ -252,7 +254,7 @@ class CodeParser:
                     continue
                 processed.add(key)
                 
-                node_content = content[node.start_byte:node.end_byte]
+                node_content = node.text.decode("utf-8")
                 signature = lines[start_line - 1].strip() if start_line <= len(lines) else ""
                 
                 definitions.append(CodeDefinition(
@@ -284,7 +286,7 @@ class CodeParser:
             List of CodeDefinition objects
         """
         definitions = []
-        content = "\n".join(lines)
+        content_bytes = "\n".join(lines).encode("utf-8")
         
         def traverse(node):
             # Check node types that indicate definitions
@@ -300,20 +302,20 @@ class CodeParser:
             if node.type in definition_types:
                 def_type = definition_types[node.type]
                 
-                # Find name child
+                # Find name child - use node.text for correct byte handling
                 name = None
                 for child in node.children:
                     if child.type in ("identifier", "type_identifier", "property_identifier"):
-                        name = content[child.start_byte:child.end_byte]
+                        name = child.text.decode("utf-8")
                         break
                     if child.type == "name":
-                        name = content[child.start_byte:child.end_byte]
+                        name = child.text.decode("utf-8")
                         break
                 
                 if name:
                     start_line = node.start_point[0] + 1
                     end_line = node.end_point[0] + 1
-                    node_content = content[node.start_byte:node.end_byte]
+                    node_content = node.text.decode("utf-8")
                     signature = lines[start_line - 1].strip() if start_line <= len(lines) else ""
                     
                     definitions.append(CodeDefinition(
@@ -365,14 +367,18 @@ class CodeParser:
     def generate_code_structure(
         self,
         definitions: List[CodeDefinition],
+        include_content: bool = True,
+        max_content_lines: int = 30,
     ) -> str:
         """Generate a structured text representation of code definitions.
         
         Args:
             definitions: List of CodeDefinition objects
+            include_content: Whether to include full method/class bodies
+            max_content_lines: Maximum lines of content to include per definition
             
         Returns:
-            Formatted string representation
+            Formatted string representation with code bodies
         """
         if not definitions:
             return "No code definitions found."
@@ -387,11 +393,30 @@ class CodeParser:
         output_lines = []
         for file_path in sorted(by_file.keys()):
             output_lines.append(f"\n## {file_path}")
+            
             for d in sorted(by_file[file_path], key=lambda x: x.start_line):
                 output_lines.append(
-                    f"  - [{d.definition_type}] {d.name} (lines {d.start_line}-{d.end_line})"
+                    f"\n### [{d.definition_type}] {d.name} (lines {d.start_line}-{d.end_line})"
                 )
-                if d.signature:
-                    output_lines.append(f"    Signature: {d.signature[:100]}")
+                
+                if include_content and d.content:
+                    # Include the actual code content
+                    content_lines = d.content.splitlines()
+                    if len(content_lines) > max_content_lines:
+                        # Truncate long content
+                        truncated = content_lines[:max_content_lines]
+                        truncated.append(f"    // ... ({len(content_lines) - max_content_lines} more lines)")
+                        code_block = "\n".join(truncated)
+                    else:
+                        code_block = d.content
+                    
+                    output_lines.append("```")
+                    output_lines.append(code_block)
+                    output_lines.append("```")
+                else:
+                    # Fallback to signature only
+                    if d.signature:
+                        output_lines.append(f"Signature: {d.signature}")
         
         return "\n".join(output_lines)
+
