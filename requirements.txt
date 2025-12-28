@@ -1,0 +1,13 @@
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+httpx>=0.25.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+celery>=5.3.0
+redis>=5.0.0
+qdrant-client>=1.7.0
+tree-sitter>=0.21.0
+tree-sitter-typescript>=0.21.0
+tree-sitter-javascript>=0.21.0
+python-dotenv>=1.0.0

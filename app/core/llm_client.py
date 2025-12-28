@@ -1,0 +1,187 @@
+"""LLM Client using OpenAI-compatible API format."""
+
+import httpx
+from typing import List, Dict, Any, Optional
+
+from app.config import get_settings
+
+
+class LLMClient:
+    """Client for OpenAI-compatible LLM API."""
+
+    def __init__(self):
+        self.settings = get_settings()
+        self.base_url = self.settings.llm_api_url.rstrip("/")
+        self.api_key = self.settings.llm_api_key
+        self.model = self.settings.llm_model
+
+    async def chat_completion(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Send a chat completion request to the LLM API.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            
+        Returns:
+            The assistant's response content
+        """
+        url = f"{self.base_url}/v1/chat/completions"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            
+        return data["choices"][0]["message"]["content"]
+
+    async def analyze_feature(
+        self,
+        feature_description: str,
+        code_structure: str,
+    ) -> Dict[str, Any]:
+        """Analyze where a feature is implemented in the code.
+        
+        Args:
+            feature_description: Description of the feature to locate
+            code_structure: String representation of code structure
+            
+        Returns:
+            Dict with implementation locations
+        """
+        system_prompt = """你是一个代码分析专家。你的任务是分析代码结构，定位实现特定功能的代码位置。
+
+请以以下 JSON 格式输出分析结果：
+{
+  "feature_description": "功能描述",
+  "implementation_location": [
+    {
+      "file": "文件路径",
+      "function": "函数/方法名",
+      "lines": "起始行-结束行",
+      "reason": "为什么这段代码实现了该功能"
+    }
+  ]
+}
+
+只输出 JSON，不要包含其他文本。"""
+
+        user_prompt = f"""功能需求: {feature_description}
+
+代码结构:
+{code_structure}
+
+请分析并定位实现该功能的代码位置。"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response = await self.chat_completion(messages, temperature=0.3)
+        
+        # Parse JSON from response
+        import json
+        try:
+            # Try to extract JSON from response
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            if response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            return json.loads(response.strip())
+        except json.JSONDecodeError:
+            return {
+                "feature_description": feature_description,
+                "implementation_location": [],
+                "error": "Failed to parse LLM response"
+            }
+
+    async def extract_features(self, problem_description: str) -> List[str]:
+        """Extract individual features from a problem description.
+        
+        Args:
+            problem_description: The full problem/requirement description
+            
+        Returns:
+            List of individual feature descriptions
+        """
+        system_prompt = """你是一个需求分析专家。从给定的需求描述中提取独立的功能点。
+
+请以 JSON 数组格式输出功能列表，每个元素是一个功能描述字符串。
+例如: ["创建频道", "发送消息", "列出消息"]
+
+只输出 JSON 数组，不要包含其他文本。"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"需求描述:\n{problem_description}"},
+        ]
+
+        response = await self.chat_completion(messages, temperature=0.3)
+        
+        import json
+        try:
+            response = response.strip()
+            if response.startswith("```json"):
+                response = response[7:]
+            if response.startswith("```"):
+                response = response[3:]
+            if response.endswith("```"):
+                response = response[:-3]
+            return json.loads(response.strip())
+        except json.JSONDecodeError:
+            # Fallback: split by common delimiters
+            return [problem_description]
+
+    async def generate_execution_plan(self, code_structure: str) -> str:
+        """Generate an execution plan suggestion for the project.
+        
+        Args:
+            code_structure: String representation of code structure
+            
+        Returns:
+            Execution plan suggestion text
+        """
+        system_prompt = """你是一个项目部署专家。根据代码结构，生成如何运行该项目的建议。
+输出简洁的执行步骤，不超过100字。"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"代码结构:\n{code_structure}"},
+        ]
+
+        return await self.chat_completion(messages, temperature=0.5)
+
+
+# Singleton instance
+_llm_client: Optional[LLMClient] = None
+
+
+def get_llm_client() -> LLMClient:
+    """Get the LLM client singleton."""
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = LLMClient()
+    return _llm_client

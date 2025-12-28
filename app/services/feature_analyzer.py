@@ -1,0 +1,179 @@
+"""Feature analyzer service for LLM-based code analysis."""
+
+import asyncio
+from typing import List, Dict, Any, Optional
+
+from app.core.llm_client import get_llm_client
+from app.core.embeddings import get_embeddings_client
+from app.services.code_indexer import CodeIndexer
+from app.services.code_parser import CodeParser
+from app.models.schemas import (
+    CodeDefinition,
+    FeatureAnalysis,
+    AnalysisReport,
+    ImplementationLocation,
+)
+
+
+class FeatureAnalyzer:
+    """Service for analyzing features and mapping them to code."""
+
+    def __init__(self):
+        self.llm_client = get_llm_client()
+        self.embeddings_client = get_embeddings_client()
+        self.code_indexer = CodeIndexer()
+        self.code_parser = CodeParser()
+
+    async def extract_features(self, problem_description: str) -> List[str]:
+        """Extract individual features from problem description.
+        
+        Args:
+            problem_description: Full requirement description
+            
+        Returns:
+            List of individual feature descriptions
+        """
+        return await self.llm_client.extract_features(problem_description)
+
+    async def analyze_single_feature(
+        self,
+        feature: str,
+        code_structure: str,
+        session_id: str,
+    ) -> FeatureAnalysis:
+        """Analyze where a single feature is implemented.
+        
+        Args:
+            feature: Feature description
+            code_structure: Code structure string
+            session_id: Session ID for vector search
+            
+        Returns:
+            FeatureAnalysis object
+        """
+        # First, try semantic search to find relevant code
+        try:
+            query_embedding = await self.embeddings_client.create_embedding(feature)
+            search_results = self.code_indexer.search(
+                query_vector=query_embedding,
+                session_id=session_id,
+                limit=5,
+                min_score=0.3,
+            )
+            
+            # Add search results to code structure
+            if search_results:
+                relevant_code = "\n\n### Relevant Code (by semantic search):\n"
+                for result in search_results:
+                    relevant_code += f"\n- {result['file_path']}: {result['name']} ({result['definition_type']}) lines {result['start_line']}-{result['end_line']}\n"
+                    relevant_code += f"  ```\n  {result['content'][:300]}...\n  ```\n"
+                code_structure = code_structure + relevant_code
+        except Exception as e:
+            # If semantic search fails, continue with just code structure
+            print(f"Semantic search failed: {e}")
+
+        # Use LLM to analyze
+        result = await self.llm_client.analyze_feature(feature, code_structure)
+        
+        # Convert to FeatureAnalysis
+        locations = []
+        for loc in result.get("implementation_location", []):
+            locations.append(ImplementationLocation(
+                file=loc.get("file", ""),
+                function=loc.get("function", ""),
+                lines=loc.get("lines", ""),
+                reason=loc.get("reason"),
+            ))
+        
+        return FeatureAnalysis(
+            feature_description=result.get("feature_description", feature),
+            implementation_location=locations,
+        )
+
+    async def analyze_all_features(
+        self,
+        features: List[str],
+        code_structure: str,
+        session_id: str,
+    ) -> List[FeatureAnalysis]:
+        """Analyze all features in parallel.
+        
+        Args:
+            features: List of feature descriptions
+            code_structure: Code structure string
+            session_id: Session ID
+            
+        Returns:
+            List of FeatureAnalysis objects
+        """
+        # Create tasks for parallel execution
+        tasks = [
+            self.analyze_single_feature(feature, code_structure, session_id)
+            for feature in features
+        ]
+        
+        # Execute in parallel
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle results
+        analyses = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                # Create empty analysis for failed ones
+                analyses.append(FeatureAnalysis(
+                    feature_description=features[i],
+                    implementation_location=[],
+                ))
+            else:
+                analyses.append(result)
+        
+        return analyses
+
+    async def generate_report(
+        self,
+        problem_description: str,
+        definitions: List[CodeDefinition],
+        session_id: str,
+    ) -> AnalysisReport:
+        """Generate complete analysis report.
+        
+        Args:
+            problem_description: Original requirement description
+            definitions: List of code definitions
+            session_id: Session ID
+            
+        Returns:
+            Complete AnalysisReport
+        """
+        # Generate code structure
+        code_structure = self.code_parser.generate_code_structure(definitions)
+        
+        # Extract features
+        features = await self.extract_features(problem_description)
+        
+        # Analyze all features in parallel
+        feature_analyses = await self.analyze_all_features(
+            features=features,
+            code_structure=code_structure,
+            session_id=session_id,
+        )
+        
+        # Generate execution plan
+        execution_plan = await self.llm_client.generate_execution_plan(code_structure)
+        
+        return AnalysisReport(
+            feature_analysis=feature_analyses,
+            execution_plan_suggestion=execution_plan,
+        )
+
+    async def generate_report_sync(
+        self,
+        problem_description: str,
+        definitions: List[CodeDefinition],
+        session_id: str,
+    ) -> AnalysisReport:
+        """Synchronous wrapper for generate_report.
+        
+        For use with Celery or other sync contexts.
+        """
+        return await self.generate_report(problem_description, definitions, session_id)
