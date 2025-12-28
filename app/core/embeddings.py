@@ -41,24 +41,29 @@ class EmbeddingsClient:
     async def create_embeddings_batch(
         self, 
         texts: List[str],
-        batch_size: int = 10,
+        max_concurrency: int = 10,
     ) -> List[List[float]]:
-        """Create embeddings for multiple texts.
+        """Create embeddings for multiple texts in parallel.
         
         Args:
             texts: List of texts to embed
-            batch_size: Number of texts per batch (Ollama processes one at a time)
+            max_concurrency: Maximum concurrent requests to Ollama
             
         Returns:
-            List of embedding vectors
+            List of embedding vectors (same order as input texts)
         """
-        embeddings = []
+        import asyncio
         
-        for text in texts:
-            embedding = await self.create_embedding(text)
-            embeddings.append(embedding)
-            
-        return embeddings
+        # Use semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(max_concurrency)
+        
+        async def limited_embed(text: str) -> List[float]:
+            async with semaphore:
+                return await self.create_embedding(text)
+        
+        # Run all embeddings in parallel
+        embeddings = await asyncio.gather(*[limited_embed(t) for t in texts])
+        return list(embeddings)
 
 
 # Singleton instance

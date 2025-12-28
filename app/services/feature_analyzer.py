@@ -148,18 +148,18 @@ class FeatureAnalyzer:
         # Generate code structure
         code_structure = self.code_parser.generate_code_structure(definitions)
         
-        # Extract features
+        # Extract features first (needed for analysis)
         features = await self.extract_features(problem_description)
         
-        # Analyze all features in parallel
-        feature_analyses = await self.analyze_all_features(
-            features=features,
-            code_structure=code_structure,
-            session_id=session_id,
+        # Run feature analysis AND execution plan generation in parallel
+        feature_analyses, execution_plan = await asyncio.gather(
+            self.analyze_all_features(
+                features=features,
+                code_structure=code_structure,
+                session_id=session_id,
+            ),
+            self.llm_client.generate_execution_plan(code_structure),
         )
-        
-        # Generate execution plan
-        execution_plan = await self.llm_client.generate_execution_plan(code_structure)
         
         return AnalysisReport(
             feature_analysis=feature_analyses,
