@@ -1,4 +1,4 @@
-"""Embeddings generation using OpenAI-compatible API."""
+"""Embeddings generation using Ollama API."""
 
 import httpx
 from typing import List, Optional
@@ -7,17 +7,16 @@ from app.config import get_settings
 
 
 class EmbeddingsClient:
-    """Client for generating text embeddings."""
+    """Client for generating text embeddings using Ollama."""
 
     def __init__(self):
         self.settings = get_settings()
-        self.base_url = self.settings.llm_api_url.rstrip("/")
-        self.api_key = self.settings.llm_api_key
+        self.base_url = self.settings.embedding_api_url.rstrip("/")
         self.model = self.settings.embedding_model
         self.dimension = self.settings.embedding_dimension
 
     async def create_embedding(self, text: str) -> List[float]:
-        """Create an embedding for a single text.
+        """Create an embedding for a single text using Ollama.
         
         Args:
             text: Text to embed
@@ -25,64 +24,39 @@ class EmbeddingsClient:
         Returns:
             Embedding vector as list of floats
         """
-        url = f"{self.base_url}/v1/embeddings"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
+        url = f"{self.base_url}/api/embeddings"
         
         payload = {
             "model": self.model,
-            "input": text,
+            "prompt": text,
         }
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
+            response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
             
-        return data["data"][0]["embedding"]
+        return data["embedding"]
 
     async def create_embeddings_batch(
         self, 
         texts: List[str],
         batch_size: int = 10,
     ) -> List[List[float]]:
-        """Create embeddings for multiple texts in batches.
+        """Create embeddings for multiple texts.
         
         Args:
             texts: List of texts to embed
-            batch_size: Number of texts per batch request
+            batch_size: Number of texts per batch (Ollama processes one at a time)
             
         Returns:
             List of embedding vectors
         """
         embeddings = []
         
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            
-            url = f"{self.base_url}/v1/embeddings"
-            
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            }
-            
-            payload = {
-                "model": self.model,
-                "input": batch,
-            }
-
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
-            
-            # Sort by index to maintain order
-            batch_embeddings = sorted(data["data"], key=lambda x: x["index"])
-            embeddings.extend([e["embedding"] for e in batch_embeddings])
+        for text in texts:
+            embedding = await self.create_embedding(text)
+            embeddings.append(embedding)
             
         return embeddings
 

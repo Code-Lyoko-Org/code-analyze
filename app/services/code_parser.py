@@ -172,41 +172,72 @@ class CodeParser:
             print(f"Failed to parse {file_path}: {e}")
             return []
         
-        definitions = []
         lines = content.splitlines()
         
-        # Get query
+        # Try Query API first, fallback to manual traversal
         query_str = self._get_query_for_language(language)
-        if not query_str:
-            # Fallback: traverse AST manually
-            return self._extract_definitions_manual(tree, file_path, lines)
+        if query_str:
+            try:
+                from tree_sitter import Query, QueryCursor
+                
+                query = Query(lang, query_str)
+                cursor = QueryCursor(query)
+                captures = cursor.captures(tree.root_node)
+                
+                # captures is a dict: {capture_name: [nodes]}
+                return self._process_query_captures(captures, file_path, content, lines)
+            except Exception as e:
+                print(f"Query failed for {file_path}: {e}")
         
-        try:
-            from tree_sitter import Query
-            query = Query(lang, query_str)
-            captures = query.captures(tree.root_node)
+        # Fallback: manual AST traversal
+        return self._extract_definitions_manual(tree, file_path, lines)
+
+    def _process_query_captures(
+        self,
+        captures: Dict[str, List[Any]],
+        file_path: str,
+        content: str,
+        lines: List[str],
+    ) -> List[CodeDefinition]:
+        """Process captures from QueryCursor.
+        
+        Args:
+            captures: Dict of {capture_name: [nodes]}
+            file_path: Path to the file
+            content: File content
+            lines: File lines
             
-            # Process captures
-            processed_definitions = set()  # Avoid duplicates
+        Returns:
+            List of CodeDefinition objects
+        """
+        definitions = []
+        processed = set()  # Avoid duplicates
+        
+        # Find definition captures (e.g., 'function.definition', 'class.definition')
+        for capture_name, nodes in captures.items():
+            if ".definition" not in capture_name:
+                continue
             
-            for node, capture_name in captures:
-                if "definition" not in capture_name:
-                    continue
-                
-                def_type = capture_name.split(".")[0]  # class, function, method, interface
-                
-                start_line = node.start_point[0] + 1  # Convert to 1-indexed
+            def_type = capture_name.split(".")[0]  # function, class, method, interface
+            
+            for node in nodes:
+                start_line = node.start_point[0] + 1
                 end_line = node.end_point[0] + 1
                 
-                # Get the name
+                # Get the name from the corresponding .name capture
+                name_capture_key = f"{def_type}.name"
                 name = None
-                for child, child_name in captures:
-                    if ".name" in child_name and child.parent == node:
-                        name = content[child.start_byte:child.end_byte]
-                        break
+                
+                if name_capture_key in captures:
+                    # Find the name node that is a child of this definition node
+                    for name_node in captures[name_capture_key]:
+                        if (name_node.start_byte >= node.start_byte and 
+                            name_node.end_byte <= node.end_byte):
+                            name = content[name_node.start_byte:name_node.end_byte]
+                            break
                 
                 if not name:
-                    # Try to get name from first identifier child
+                    # Fallback: try to find identifier in children
                     for child in node.children:
                         if child.type in ("identifier", "type_identifier", "property_identifier"):
                             name = content[child.start_byte:child.end_byte]
@@ -215,13 +246,12 @@ class CodeParser:
                 if not name:
                     continue
                 
-                # Create unique key to avoid duplicates
+                # Deduplicate
                 key = (file_path, name, start_line)
-                if key in processed_definitions:
+                if key in processed:
                     continue
-                processed_definitions.add(key)
+                processed.add(key)
                 
-                # Get the full content and signature
                 node_content = content[node.start_byte:node.end_byte]
                 signature = lines[start_line - 1].strip() if start_line <= len(lines) else ""
                 
@@ -234,9 +264,6 @@ class CodeParser:
                     content=node_content,
                     signature=signature,
                 ))
-        except Exception as e:
-            print(f"Query failed for {file_path}: {e}")
-            return self._extract_definitions_manual(tree, file_path, lines)
         
         return definitions
 

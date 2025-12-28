@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     debug: bool = False
     temp_dir: str = "/tmp/code-analyze"
 
+    # Embedding Configuration (Ollama)
+    embedding_api_url: str = "http://localhost:11434"
+    embedding_model: str = "nomic-embed-text:latest"
+    embedding_dimension: int = 768  # nomic-embed-text dimension
+
     # Supported file extensions for code analysis
     supported_extensions: List[str] = [
         ".ts", ".tsx", ".js", ".jsx",  # TypeScript/JavaScript

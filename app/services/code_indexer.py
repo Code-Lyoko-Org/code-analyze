@@ -142,9 +142,10 @@ class CodeIndexer:
         """
         self._ensure_collection()
         
-        results = self.client.search(
+        # Use query_points API (new qdrant-client version)
+        results = self.client.query_points(
             collection_name=self.settings.qdrant_collection,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             score_threshold=min_score,
             query_filter=qdrant_models.Filter(
@@ -155,7 +156,7 @@ class CodeIndexer:
                     ),
                 ]
             ),
-        )
+        ).points
         
         return [
             {
