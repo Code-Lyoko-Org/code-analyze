@@ -277,6 +277,10 @@ class CodeParser:
     ) -> List[CodeDefinition]:
         """Manually extract definitions by traversing AST.
         
+        P2 Enhancement: When a definition exceeds max_block_chars:
+        - Has meaningful children → recursively extract children
+        - Is a leaf node → split by lines into multiple blocks
+        
         Args:
             tree: Parsed AST tree
             file_path: Path to the file
@@ -286,54 +290,171 @@ class CodeParser:
             List of CodeDefinition objects
         """
         definitions = []
-        content_bytes = "\n".join(lines).encode("utf-8")
+        max_block_chars = self.settings.max_block_chars
         
-        def traverse(node):
-            # Check node types that indicate definitions
-            definition_types = {
-                "function_declaration": "function",
-                "function_definition": "function",
-                "class_declaration": "class",
-                "class_definition": "class",
-                "method_definition": "method",
-                "interface_declaration": "interface",
-            }
+        # Node types that represent meaningful definitions
+        definition_types = {
+            "function_declaration": "function",
+            "function_definition": "function",
+            "class_declaration": "class",
+            "class_definition": "class",
+            "method_definition": "method",
+            "interface_declaration": "interface",
+        }
+        
+        # Node types that are meaningful children worth extracting
+        meaningful_child_types = {
+            "function_declaration", "function_definition",
+            "method_definition", "class_declaration", "class_definition",
+            "if_statement", "for_statement", "for_in_statement", "for_of_statement",
+            "while_statement", "try_statement", "switch_statement",
+        }
+        
+        def get_node_name(node) -> Optional[str]:
+            """Extract name from a definition node."""
+            for child in node.children:
+                if child.type in ("identifier", "type_identifier", "property_identifier", "name"):
+                    return child.text.decode("utf-8")
+            return None
+        
+        def has_meaningful_children(node, depth: int = 0) -> bool:
+            """Check if node has children worth recursing into.
             
-            if node.type in definition_types:
-                def_type = definition_types[node.type]
+            Checks up to 2 levels deep (for statement_block children).
+            """
+            if depth > 2:
+                return False
                 
-                # Find name child - use node.text for correct byte handling
-                name = None
+            for child in node.children:
+                if child.type in meaningful_child_types:
+                    return True
+                if child.type in definition_types:
+                    return True
+                # Check into statement_block (function body)
+                if child.type in ("statement_block", "block", "class_body"):
+                    if has_meaningful_children(child, depth + 1):
+                        return True
+            return False
+        
+        def split_by_lines(content: str, max_chars: int) -> List[str]:
+            """Split content by lines into chunks within max_chars."""
+            chunks = []
+            current_chunk = ""
+            
+            for line in content.splitlines(keepends=True):
+                if len(current_chunk) + len(line) > max_chars and current_chunk:
+                    chunks.append(current_chunk.rstrip())
+                    current_chunk = line
+                else:
+                    current_chunk += line
+            
+            if current_chunk.strip():
+                chunks.append(current_chunk.rstrip())
+            
+            return chunks
+        
+        def extract_from_node(node, parent_name: Optional[str] = None):
+            """Recursively extract definitions from a node."""
+            
+            if node.type not in definition_types:
+                # Not a definition, check children
                 for child in node.children:
-                    if child.type in ("identifier", "type_identifier", "property_identifier"):
-                        name = child.text.decode("utf-8")
-                        break
-                    if child.type == "name":
-                        name = child.text.decode("utf-8")
-                        break
-                
-                if name:
-                    start_line = node.start_point[0] + 1
-                    end_line = node.end_point[0] + 1
-                    node_content = node.text.decode("utf-8")
-                    signature = lines[start_line - 1].strip() if start_line <= len(lines) else ""
-                    
+                    extract_from_node(child, parent_name)
+                return
+            
+            def_type = definition_types[node.type]
+            name = get_node_name(node)
+            
+            if not name:
+                for child in node.children:
+                    extract_from_node(child, parent_name)
+                return
+            
+            node_content = node.text.decode("utf-8")
+            start_line = node.start_point[0] + 1
+            end_line = node.end_point[0] + 1
+            signature = lines[start_line - 1].strip() if start_line <= len(lines) else ""
+            full_name = f"{parent_name}.{name}" if parent_name else name
+            
+            # P2: Check if this definition is too large
+            if len(node_content) > max_block_chars:
+                # Strategy 1: Has meaningful children → recurse
+                if has_meaningful_children(node):
+                    # Add header only
+                    header = self._extract_header(node_content, max_chars=300)
                     definitions.append(CodeDefinition(
                         file_path=file_path,
-                        name=name,
+                        name=full_name,
                         definition_type=def_type,
                         start_line=start_line,
                         end_line=end_line,
-                        content=node_content,
+                        content=header,
                         signature=signature,
                     ))
+                    # Recurse into children
+                    for child in node.children:
+                        extract_from_node(child, parent_name=full_name if def_type == "class" else parent_name)
+                    return
+                else:
+                    # Strategy 2: Leaf node → split by lines
+                    chunks = split_by_lines(node_content, max_block_chars)
+                    for i, chunk in enumerate(chunks):
+                        chunk_name = f"{full_name}[part{i+1}]" if len(chunks) > 1 else full_name
+                        definitions.append(CodeDefinition(
+                            file_path=file_path,
+                            name=chunk_name,
+                            definition_type=def_type,
+                            start_line=start_line,
+                            end_line=end_line,
+                            content=chunk,
+                            signature=signature if i == 0 else "",
+                        ))
+                    return
             
-            # Recurse into children
+            # Normal case: within size limit
+            definitions.append(CodeDefinition(
+                file_path=file_path,
+                name=full_name,
+                definition_type=def_type,
+                start_line=start_line,
+                end_line=end_line,
+                content=node_content,
+                signature=signature,
+            ))
+            
+            # Still recurse for nested definitions
             for child in node.children:
-                traverse(child)
+                extract_from_node(child, parent_name=full_name if def_type == "class" else parent_name)
         
-        traverse(tree.root_node)
+        extract_from_node(tree.root_node)
         return definitions
+    
+    def _extract_header(self, content: str, max_chars: int = 300) -> str:
+        """Extract header (signature + docstring) from content.
+        
+        Args:
+            content: Full content
+            max_chars: Max chars for header
+            
+        Returns:
+            Header string with ellipsis
+        """
+        lines = content.splitlines()
+        header_lines = []
+        char_count = 0
+        
+        for line in lines[:15]:  # Check first 15 lines
+            header_lines.append(line)
+            char_count += len(line) + 1
+            
+            # Stop after opening brace or colon (function/class body start)
+            if char_count > max_chars or ('{' in line and not line.strip().startswith('//')):
+                break
+        
+        header = "\n".join(header_lines)
+        if len(content) > len(header):
+            header += "\n    // ... (子定义已递归提取)"
+        return header
 
     def parse_files(
         self,
