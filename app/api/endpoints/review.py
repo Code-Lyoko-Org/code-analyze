@@ -1,17 +1,17 @@
 """Review API endpoint for code analysis."""
 
 import uuid
-import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, BackgroundTasks
+from fastapi import APIRouter, File, Form, UploadFile, BackgroundTasks
 
 from app.services.file_extractor import FileExtractor
 from app.services.code_parser import CodeParser
 from app.services.code_indexer import CodeIndexer
 from app.services.feature_analyzer import FeatureAnalyzer
+from app.services.cache_service import get_cache_service
 from app.core.embeddings import get_embeddings_client
-from app.models.schemas import AnalysisReport, ReviewResponse
+from app.models.schemas import AnalysisReport, ReviewResponse, CodeDefinition
 
 
 router = APIRouter()
@@ -22,66 +22,99 @@ async def review_code(
     background_tasks: BackgroundTasks,
     problem_description: str = Form(..., description="Description of required features"),
     code_zip: UploadFile = File(..., description="ZIP file containing the code"),
+    skip_cache: bool = Form(False, description="Skip cache and force reprocessing of ZIP"),
 ) -> ReviewResponse:
     """Analyze a codebase and generate a feature location report.
     
     This endpoint accepts a ZIP file containing source code and a problem
     description, then returns a JSON report mapping features to code locations.
+    
+    ZIP processing (AST parsing + indexing) is cached for 24 hours by MD5.
+    Same ZIP with different queries will reuse the processed code definitions.
     """
-    session_id = str(uuid.uuid4())
+    # Read ZIP content first
+    zip_content = await code_zip.read()
+    cache_service = get_cache_service()
+    
+    session_id: Optional[str] = None
+    definitions: list = []
+    cache_hit = False
+    
+    # Check if ZIP was already processed
+    if not skip_cache:
+        try:
+            cached_session_id, cached_definitions = cache_service.get_cached_definitions(zip_content)
+            if cached_session_id and cached_definitions:
+                session_id = cached_session_id
+                definitions = [CodeDefinition(**d) for d in cached_definitions]
+                cache_hit = True
+                print(f"Cache hit! Reusing {len(definitions)} definitions from session {session_id}")
+        except Exception as e:
+            print(f"Cache check failed: {e}")
+    
     file_extractor = FileExtractor()
     
     try:
-        # 1. Extract ZIP file
-        zip_content = await code_zip.read()
-        project_root, file_paths = file_extractor.extract_zip(zip_content, session_id)
-        
-        if not file_paths:
-            return ReviewResponse(
-                success=False,
-                error="No supported files found in the uploaded ZIP",
-            )
-        
-        # 2. Parse code to extract definitions
-        code_parser = CodeParser()
-        definitions = code_parser.parse_files(project_root, file_paths)
-        
-        if not definitions:
-            return ReviewResponse(
-                success=False,
-                error="No code definitions (functions, classes) found in the codebase",
-            )
-        
-        # 3. Generate embeddings and index code (for semantic search)
-        try:
-            embeddings_client = get_embeddings_client()
-            code_indexer = CodeIndexer()
+        # Process ZIP if not cached
+        if not cache_hit:
+            session_id = str(uuid.uuid4())
             
-            # Generate texts for embedding
-            texts = [
-                f"{d.definition_type} {d.name}\n{d.signature or ''}\n{d.content[:500]}"
-                for d in definitions
-            ]
+            # 1. Extract ZIP file
+            project_root, file_paths = file_extractor.extract_zip(zip_content, session_id)
             
-            # Generate embeddings in batches
-            embeddings = await embeddings_client.create_embeddings_batch(texts)
+            if not file_paths:
+                return ReviewResponse(
+                    success=False,
+                    error="No supported files found in the uploaded ZIP",
+                )
             
-            # Index into vector store
-            code_indexer.index_definitions(definitions, embeddings, session_id)
-        except Exception as e:
-            # Continue without vector search if embedding/indexing fails
-            print(f"Indexing failed (continuing without semantic search): {e}")
+            # 2. Parse code to extract definitions
+            code_parser = CodeParser()
+            definitions = code_parser.parse_files(project_root, file_paths)
+            
+            if not definitions:
+                return ReviewResponse(
+                    success=False,
+                    error="No code definitions (functions, classes) found in the codebase",
+                )
+            
+            # 3. Generate embeddings and index code (for semantic search)
+            try:
+                embeddings_client = get_embeddings_client()
+                code_indexer = CodeIndexer()
+                
+                # Generate texts for embedding
+                texts = [
+                    f"{d.definition_type} {d.name}\n{d.signature or ''}\n{d.content[:500]}"
+                    for d in definitions
+                ]
+                
+                # Generate embeddings in batches
+                embeddings = await embeddings_client.create_embeddings_batch(texts)
+                
+                # Index into vector store
+                code_indexer.index_definitions(definitions, embeddings, session_id)
+            except Exception as e:
+                # Continue without vector search if embedding/indexing fails
+                print(f"Indexing failed (continuing without semantic search): {e}")
+            
+            # 4. Cache the processing result
+            try:
+                cache_service.cache_definitions(zip_content, session_id, definitions)
+                print(f"Cached {len(definitions)} definitions for session {session_id}")
+            except Exception as e:
+                print(f"Failed to cache processing result: {e}")
+            
+            # Clean up extracted files (don't need them anymore)
+            file_extractor.cleanup(session_id)
         
-        # 4. Analyze features using LLM
+        # 5. Analyze features using LLM (always run, as query may differ)
         feature_analyzer = FeatureAnalyzer()
         report = await feature_analyzer.generate_report(
             problem_description=problem_description,
             definitions=definitions,
             session_id=session_id,
         )
-        
-        # 5. Schedule cleanup in background
-        background_tasks.add_task(cleanup_session, session_id, file_extractor)
         
         return ReviewResponse(
             success=True,
@@ -90,28 +123,19 @@ async def review_code(
         
     except Exception as e:
         # Clean up on error
-        try:
-            file_extractor.cleanup(session_id)
-            code_indexer = CodeIndexer()
-            code_indexer.delete_session(session_id)
-        except:
-            pass
+        if not cache_hit:
+            try:
+                file_extractor.cleanup(session_id)
+                code_indexer = CodeIndexer()
+                code_indexer.delete_session(session_id)
+            except:
+                pass
         
         import traceback
         return ReviewResponse(
             success=False,
             error=f"Analysis failed: {str(e)}\n{traceback.format_exc()}",
         )
-
-
-async def cleanup_session(session_id: str, file_extractor: FileExtractor):
-    """Clean up session resources."""
-    try:
-        file_extractor.cleanup(session_id)
-        code_indexer = CodeIndexer()
-        code_indexer.delete_session(session_id)
-    except Exception as e:
-        print(f"Cleanup failed for session {session_id}: {e}")
 
 
 @router.get("/health")

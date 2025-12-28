@@ -1,9 +1,14 @@
 """LLM Client using OpenAI-compatible API format."""
 
 import httpx
+import logging
 from typing import List, Dict, Any, Optional
 
 from app.config import get_settings
+
+# Configure logger
+logger = logging.getLogger("llm_client")
+logging.basicConfig(level=logging.INFO)
 
 
 class LLMClient:
@@ -47,12 +52,28 @@ class LLMClient:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
+        # Log the full prompt
+        logger.info("=" * 60)
+        logger.info(f"LLM Request to {self.model}")
+        logger.info("=" * 60)
+        for msg in messages:
+            logger.info(f"[{msg['role'].upper()}]")
+            logger.info(msg['content'][:2000] + ("..." if len(msg['content']) > 2000 else ""))
+            logger.info("-" * 40)
+
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
-            
-        return data["choices"][0]["message"]["content"]
+        
+        result = data["choices"][0]["message"]["content"]
+        
+        # Log the response
+        logger.info(f"[ASSISTANT RESPONSE]")
+        logger.info(result[:1000] + ("..." if len(result) > 1000 else ""))
+        logger.info("=" * 60)
+        
+        return result
 
     async def analyze_feature(
         self,
@@ -185,3 +206,4 @@ def get_llm_client() -> LLMClient:
     if _llm_client is None:
         _llm_client = LLMClient()
     return _llm_client
+
