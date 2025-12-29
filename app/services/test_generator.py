@@ -157,8 +157,6 @@ class TestGenerator:
             lines.append(f"{i}. {feature.feature_description}")
             for loc in feature.implementation_location:
                 lines.append(f"   - {loc.file}: {loc.function} (lines {loc.lines})")
-                if loc.reason:
-                    lines.append(f"     Reason: {loc.reason}")
         return "\n".join(lines)
 
 

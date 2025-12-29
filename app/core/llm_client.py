@@ -334,6 +334,67 @@ def test_feature():
             
         return response.strip()
 
+    async def fix_test_code(
+        self,
+        original_code: str,
+        error_log: str,
+        project_type: str = "nodejs",
+    ) -> str:
+        """Analyze test failure and fix the test code.
+        
+        Args:
+            original_code: The original test code that failed
+            error_log: Error log from test execution
+            project_type: "nodejs" or "python"
+            
+        Returns:
+            Fixed test code
+        """
+        system_prompt = f"""你是一个测试工程师。测试代码执行失败了，你需要分析错误并修复代码。
+
+规则：
+1. 仔细分析错误日志，找出失败原因
+2. 常见问题：GraphQL 语法错误、变量名错误、断言错误、this.timeout 错误
+3. 修复代码并返回完整的测试代码
+4. 只输出修复后的代码，不要其他解释
+
+如果错误是 "this.timeout is not a function"，请移除 this.timeout() 调用。"""
+
+        user_prompt = f"""原始测试代码：
+```
+{original_code}
+```
+
+错误日志：
+```
+{error_log[-2000:]}
+```
+
+请分析错误并输出修复后的完整测试代码。"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response = await self.chat_completion(
+            messages,
+            trace_name="fix_test_code"
+        )
+        
+        # Clean up code block markers
+        response = response.strip()
+        if response.startswith("```javascript"):
+            response = response[13:]
+        if response.startswith("```python"):
+            response = response[9:]
+        if response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+            
+        return response.strip()
+
 
 # Singleton instance
 _llm_client: Optional[LLMClient] = None

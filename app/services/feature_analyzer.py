@@ -206,6 +206,8 @@ class FeatureAnalyzer:
         from app.services.test_generator import get_test_generator
         from app.services.docker_executor import get_docker_executor
         
+        MAX_RETRY = 2  # Maximum retry attempts for ReAct loop
+        
         try:
             # Generate test code (with project_path for schema extraction)
             test_generator = get_test_generator()
@@ -219,17 +221,36 @@ class FeatureAnalyzer:
             # Try to execute tests if project path is provided
             execution_result = None
             if project_path:
-                try:
-                    docker_executor = get_docker_executor()
-                    project_type = test_generator._detect_project_type(execution_plan)
-                    execution_result = await docker_executor.execute_tests(
-                        project_path=project_path,
-                        test_code=test_code,
-                        project_type=project_type,
-                    )
-                except Exception as e:
-                    logger.warning(f"Test execution failed: {e}")
-                    # Still return verification with just generated code
+                docker_executor = get_docker_executor()
+                project_type = test_generator._detect_project_type(execution_plan)
+                
+                # ReAct Loop: Execute → Analyze → Fix → Retry
+                for attempt in range(MAX_RETRY + 1):
+                    try:
+                        execution_result = await docker_executor.execute_tests(
+                            project_path=project_path,
+                            test_code=test_code,
+                            project_type=project_type,
+                        )
+                        
+                        # If tests passed, we're done
+                        if execution_result and execution_result.tests_passed:
+                            logger.info(f"Tests passed on attempt {attempt + 1}")
+                            break
+                        
+                        # If tests failed and we have retries left, try to fix
+                        if attempt < MAX_RETRY and execution_result:
+                            logger.info(f"Tests failed on attempt {attempt + 1}, using LLM to fix...")
+                            test_code = await self.llm_client.fix_test_code(
+                                original_code=test_code,
+                                error_log=execution_result.log,
+                                project_type=project_type,
+                            )
+                            
+                    except Exception as e:
+                        logger.warning(f"Test execution failed on attempt {attempt + 1}: {e}")
+                        if attempt == MAX_RETRY:
+                            break
             
             return FunctionalVerification(
                 generated_test_code=test_code,

@@ -10,7 +10,6 @@ class ImplementationLocation(BaseModel):
     file: str = Field(..., description="File path relative to project root")
     function: str = Field(..., description="Function or method name")
     lines: str = Field(..., description="Line range, e.g. '13-16'")
-    reason: Optional[str] = Field(None, description="Explanation of why this implements the feature")
 
 
 class FeatureAnalysis(BaseModel):
