@@ -8,6 +8,7 @@ from typing import Optional
 
 from app.config import get_settings
 from app.models.schemas import ExecutionResult
+from app.services.templates import NODEJS_TEST_SCRIPT, PYTHON_TEST_SCRIPT
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -61,15 +62,13 @@ class DockerExecutor:
             logger.error(f"Test execution timed out after {timeout} seconds")
             return ExecutionResult(
                 tests_passed=False,
-                log="测试执行超时",
-                error=f"测试执行超时（{timeout}秒）"
+                log=f"测试执行超时（{timeout}秒）",
             )
         except Exception as e:
             logger.error(f"Test execution failed: {e}", exc_info=True)
             return ExecutionResult(
                 tests_passed=False,
-                log="测试执行失败",
-                error="测试环境初始化失败，请检查 Docker 配置"
+                log=f"测试环境初始化失败: {e}",
             )
 
     async def _execute_nodejs_tests(
@@ -93,56 +92,8 @@ class DockerExecutor:
         test_file_path.write_text(test_code)
         logger.info(f"Written test file to {test_file_path}")
         
-        # Create a script to run tests
-        # Note: NestJS respects the PORT env var, and we wait for /graphql endpoint
-        run_script = f"""#!/bin/bash
-set -e
-
-cd /app
-
-# Install dependencies
-echo "Installing dependencies..."
-npm install --legacy-peer-deps 2>&1 | tail -5
-
-# Install test dependencies
-npm install --save-dev supertest mocha 2>&1 | tail -3
-
-# Start the server in background
-echo "Starting server on port {port}..."
-PORT={port} npm run start:dev > /tmp/server.log 2>&1 &
-SERVER_PID=$!
-
-# Wait for server to be ready (check /graphql endpoint)
-echo "Waiting for server..."
-MAX_WAIT=90
-for i in $(seq 1 $MAX_WAIT); do
-    # Check if server is responding
-    if curl -s -o /dev/null -w "%{{http_code}}" http://127.0.0.1:{port}/graphql 2>/dev/null | grep -q "400\\|200"; then
-        echo "Server is ready after $i seconds!"
-        break
-    fi
-    # Also check if process died
-    if ! kill -0 $SERVER_PID 2>/dev/null; then
-        echo "Server process died!"
-        cat /tmp/server.log
-        exit 1
-    fi
-    sleep 1
-done
-
-# Extra wait for full initialization
-sleep 2
-
-# Run the tests
-echo "========== Running tests =========="
-npx mocha generated_test.spec.js --timeout 30000 2>&1
-TEST_EXIT_CODE=$?
-
-# Cleanup
-kill $SERVER_PID 2>/dev/null || true
-
-exit $TEST_EXIT_CODE
-"""
+        # Create test runner script from template
+        run_script = NODEJS_TEST_SCRIPT.format(port=port)
         
         run_script_path = Path(project_path) / "run_tests.sh"
         run_script_path.write_text(run_script)
@@ -181,48 +132,8 @@ exit $TEST_EXIT_CODE
         test_file_path = Path(project_path) / "generated_test.py"
         test_file_path.write_text(test_code)
         
-        # Create a script to run tests
-        run_script = f"""#!/bin/bash
-set -e
-
-cd /app
-
-# Install dependencies
-echo "Installing dependencies..."
-pip install -r requirements.txt 2>&1 | tail -5 || true
-pip install pytest pytest-asyncio httpx 2>&1 | tail -3
-
-# Start the server in background
-echo "Starting server on port {port}..."
-if [ -f "manage.py" ]; then
-    python manage.py runserver 0.0.0.0:{port} > /tmp/server.log 2>&1 &
-elif [ -f "app/main.py" ]; then
-    uvicorn app.main:app --host 0.0.0.0 --port {port} > /tmp/server.log 2>&1 &
-else
-    python -m uvicorn main:app --host 0.0.0.0 --port {port} > /tmp/server.log 2>&1 &
-fi
-SERVER_PID=$!
-
-# Wait for server
-echo "Waiting for server..."
-for i in $(seq 1 30); do
-    if curl -s http://127.0.0.1:{port} > /dev/null 2>&1; then
-        echo "Server is ready!"
-        break
-    fi
-    sleep 1
-done
-
-sleep 2
-
-# Run tests
-echo "========== Running tests =========="
-pytest generated_test.py -v 2>&1
-TEST_EXIT_CODE=$?
-
-kill $SERVER_PID 2>/dev/null || true
-exit $TEST_EXIT_CODE
-"""
+        # Create test runner script from template
+        run_script = PYTHON_TEST_SCRIPT.format(port=port)
         
         run_script_path = Path(project_path) / "run_tests.sh"
         run_script_path.write_text(run_script)
