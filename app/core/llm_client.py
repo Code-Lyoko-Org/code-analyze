@@ -1,19 +1,28 @@
-"""LLM client using official OpenAI SDK."""
+"""LLM client using official OpenAI SDK with optional Langfuse observability."""
 
 import json
 import logging
+import os
 from typing import List, Dict, Any, Optional
 
-from openai import AsyncOpenAI
-from langfuse import Langfuse
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Conditionally import OpenAI client based on Langfuse config
+if os.getenv("LANGFUSE_PUBLIC_KEY"):
+    from langfuse.openai import AsyncOpenAI
+    logger.info("Langfuse tracing enabled")
+else:
+    from openai import AsyncOpenAI
+
 
 class LLMClient:
-    """Client for LLM API calls using OpenAI SDK."""
+    """Client for LLM API calls using OpenAI SDK with optional Langfuse tracing."""
 
     def __init__(self):
         self.settings = get_settings()
@@ -23,20 +32,6 @@ class LLMClient:
         self.client = AsyncOpenAI(
             api_key=self.settings.llm_api_key,
         )
-        
-        # Initialize Langfuse for observability (optional)
-        public_key = self.settings.langfuse_public_key
-        secret_key = self.settings.langfuse_secret_key
-        host = self.settings.langfuse_host
-        
-        if public_key and secret_key:
-            self.langfuse = Langfuse(
-                public_key=public_key,
-                secret_key=secret_key,
-                host=host,
-            )
-        else:
-            self.langfuse = None
 
     async def chat_completion(
         self,
