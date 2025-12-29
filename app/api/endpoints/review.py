@@ -27,19 +27,17 @@ async def review_code(
     background_tasks: BackgroundTasks,
     problem_description: str = Form(..., description="Description of required features"),
     code_zip: UploadFile = File(..., description="ZIP file containing the code"),
-    skip_cache: bool = Form(False, description="Skip cache and force reprocessing of ZIP"),
-    enable_verification: bool = Form(False, description="Enable functional verification (generate and run tests)"),
 ) -> ReviewResponse:
     """Analyze a codebase and generate a feature location report.
     
     This endpoint accepts a ZIP file containing source code and a problem
     description, then returns a JSON report mapping features to code locations.
     
-    ZIP processing (AST parsing + indexing) is cached for 24 hours by MD5.
-    Same ZIP with different queries will reuse the processed code definitions.
-    
-    Set enable_verification=true to generate integration tests and execute them.
+    Includes functional verification: generates integration tests and executes them.
     """
+    # Always skip cache and enable verification
+    skip_cache = True
+    enable_verification = True
     # Read ZIP content first
     zip_content = await code_zip.read()
     cache_service = get_cache_service()

@@ -26,10 +26,11 @@ class Settings(BaseSettings):
     debug: bool = False
     temp_dir: str = "/tmp/code-analyze"
 
-    # Embedding Configuration (Ollama)
-    embedding_api_url: str = "http://localhost:11434"
-    embedding_model: str = "nomic-embed-text:latest"
-    embedding_dimension: int = 768  # nomic-embed-text dimension
+    # Embedding Configuration (OpenAI compatible)
+    embedding_api_url: str = "https://api.openai.com/v1"  # OpenAI API
+    embedding_api_key: str = ""  # OpenAI API key (can be same as llm_api_key)
+    embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
+    embedding_dimension: int = 1536  # text-embedding-3-small dimension
 
     # Supported file extensions for code analysis
     supported_extensions: List[str] = [

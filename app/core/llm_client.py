@@ -55,7 +55,11 @@ class LLMClient:
         Returns:
             The assistant's response content
         """
-        url = f"{self.base_url}/v1/chat/completions"
+        # Build URL - handle both base URLs with and without /v1
+        if self.base_url.endswith("/v1"):
+            url = f"{self.base_url}/chat/completions"
+        else:
+            url = f"{self.base_url}/v1/chat/completions"
         
         headers = {
             "Content-Type": "application/json",
@@ -65,8 +69,11 @@ class LLMClient:
         payload: Dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
         }
+        
+        # Only add temperature if not default (1.0) - some models like o1 don't support it
+        if temperature != 1.0:
+            payload["temperature"] = temperature
         
         if max_tokens:
             payload["max_tokens"] = max_tokens
@@ -159,7 +166,7 @@ class LLMClient:
 
         response = await self.chat_completion(
             messages, 
-            temperature=0.3, 
+            temperature=1.0, 
             trace_name=f"analyze_feature:{feature_description[:30]}"
         )
         
@@ -203,7 +210,7 @@ class LLMClient:
 
         response = await self.chat_completion(
             messages, 
-            temperature=0.3,
+            temperature=1.0,
             trace_name="extract_features"
         )
         
@@ -238,7 +245,7 @@ class LLMClient:
 
         return await self.chat_completion(
             messages, 
-            temperature=0.5,
+            temperature=1.0,
             trace_name="generate_execution_plan"
         )
 
@@ -338,7 +345,7 @@ def test_feature():
 
         response = await self.chat_completion(
             messages,
-            temperature=0.3,
+            temperature=1.0,
             trace_name="generate_test_code"
         )
         

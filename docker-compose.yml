@@ -9,16 +9,23 @@ services:
       - LLM_API_URL=${LLM_API_URL:-https://x666.me}
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_MODEL=${LLM_MODEL:-gemini-2.5-pro}
+      - EMBEDDING_API_URL=http://ollama:11434
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text:latest}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-768}
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_URL=redis://redis:6379/0
       - TEMP_DIR=/tmp/code-analyze
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
     volumes:
       - temp_data:/tmp/code-analyze
       - /var/run/docker.sock:/var/run/docker.sock # For Docker-in-Docker execution
     depends_on:
       - redis
       - qdrant
+      - ollama
     restart: unless-stopped
 
   celery:
@@ -28,6 +35,8 @@ services:
       - LLM_API_URL=${LLM_API_URL:-https://x666.me}
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_MODEL=${LLM_MODEL:-gemini-2.5-pro}
+      - EMBEDDING_API_URL=http://ollama:11434
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text:latest}
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_URL=redis://redis:6379/0
@@ -37,7 +46,18 @@ services:
     depends_on:
       - redis
       - qdrant
+      - ollama
     restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    # Pull nomic-embed-text model on first run:
+    # docker exec -it code-analyze-ollama-1 ollama pull nomic-embed-text
 
   redis:
     image: redis:7-alpine
@@ -59,3 +79,6 @@ volumes:
   temp_data:
   redis_data:
   qdrant_data:
+  ollama_data:
+
+
