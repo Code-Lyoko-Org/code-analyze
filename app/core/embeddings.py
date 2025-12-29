@@ -19,21 +19,9 @@ class EmbeddingsClient:
         self.dimension = self.settings.embedding_dimension
         
         # Initialize OpenAI client for embeddings
-        api_url = self.settings.embedding_api_url.rstrip("/")
-        
-        if "api.openai.com" in api_url:
-            # Official OpenAI - use default
-            self.client = AsyncOpenAI(
-                api_key=self.settings.embedding_api_key,
-            )
-        else:
-            # Third-party API - set base_url
-            if not api_url.endswith("/v1"):
-                api_url = f"{api_url}/v1"
-            self.client = AsyncOpenAI(
-                api_key=self.settings.embedding_api_key,
-                base_url=api_url,
-            )
+        self.client = AsyncOpenAI(
+            api_key=self.settings.embedding_api_key,
+        )
 
     async def create_embedding(self, text: str) -> List[float]:
         """Create an embedding for a single text using OpenAI SDK.

@@ -20,23 +20,9 @@ class LLMClient:
         self.model = self.settings.llm_model
         
         # Initialize OpenAI client
-        # For official OpenAI API, don't set base_url (SDK uses default)
-        # For third-party APIs, set base_url
-        api_url = self.settings.llm_api_url.rstrip("/")
-        
-        if "api.openai.com" in api_url:
-            # Official OpenAI - use default
-            self.client = AsyncOpenAI(
-                api_key=self.settings.llm_api_key,
-            )
-        else:
-            # Third-party API - set base_url
-            if not api_url.endswith("/v1"):
-                api_url = f"{api_url}/v1"
-            self.client = AsyncOpenAI(
-                api_key=self.settings.llm_api_key,
-                base_url=api_url,
-            )
+        self.client = AsyncOpenAI(
+            api_key=self.settings.llm_api_key,
+        )
         
         # Initialize Langfuse for observability (optional)
         public_key = self.settings.langfuse_public_key
@@ -120,13 +106,12 @@ class LLMClient:
 
 请以以下 JSON 格式输出分析结果：
 {
-  "feature_description": "功能描述",
+  "feature_description": "功能描述(實現xxx功能)",
   "implementation_location": [
     {
       "file": "文件路径",
       "function": "函数/方法名",
       "lines": "起始行-结束行",
-      "reason": "为什么这段代码实现了该功能"
     }
   ]
 }
