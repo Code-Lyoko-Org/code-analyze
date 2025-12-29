@@ -242,6 +242,119 @@ class LLMClient:
             trace_name="generate_execution_plan"
         )
 
+    async def generate_test_code(
+        self,
+        features_text: str,
+        execution_plan: str,
+        code_structure: str,
+        project_type: str = "nodejs",
+        schema_content: str = "",
+    ) -> str:
+        """Generate integration test code based on feature analysis.
+        
+        Args:
+            features_text: Formatted feature analysis text
+            execution_plan: How to run the project
+            code_structure: Code structure string
+            project_type: "nodejs" or "python"
+            schema_content: GraphQL schema or API definition (for accurate query generation)
+            
+        Returns:
+            Generated test code as string
+        """
+        if project_type == "nodejs":
+            system_prompt = """你是一个测试工程师。你需要根据功能分析生成 Node.js 集成测试代码。
+
+测试代码要求：
+1. 使用 supertest 和 mocha 框架
+2. 测试服务运行在 http://localhost:3000
+3. 如果是 GraphQL API，使用 POST /graphql 发送查询
+4. **重要**：GraphQL 查询必须严格遵循提供的 schema 定义，包括：
+   - Mutation/Query 名称必须完全匹配
+   - Input 参数名称必须完全匹配（如 createChannelInput 不能写成 input）
+   - 字段类型必须正确（Int vs String）
+5. 使用 assert 进行断言
+6. 只输出可执行的 JavaScript 代码，不要包含其他文本
+
+示例格式：
+```javascript
+const request = require('supertest');
+const assert = require('assert');
+
+describe('API Tests', () => {
+  it('should test feature', async () => {
+    const res = await request('http://localhost:3000')
+      .post('/graphql')
+      .send({ query: '...' });
+    assert.equal(res.status, 200);
+  });
+});
+```"""
+        else:
+            system_prompt = """你是一个测试工程师。你需要根据功能分析生成 Python 集成测试代码。
+
+测试代码要求：
+1. 使用 pytest 和 httpx 库
+2. 测试服务运行在 http://localhost:8000
+3. 测试应该覆盖所有分析出的功能
+4. 只输出可执行的 Python 代码，不要包含其他文本
+
+示例格式：
+```python
+import httpx
+import pytest
+
+def test_feature():
+    with httpx.Client(base_url="http://localhost:8000") as client:
+        response = client.get("/api/endpoint")
+        assert response.status_code == 200
+```"""
+
+        # Build user prompt with schema if available
+        user_prompt = f"""功能分析结果：
+{features_text}
+
+项目运行方式：
+{execution_plan}
+"""
+        
+        # Add schema content if available (important for accurate GraphQL queries)
+        if schema_content:
+            user_prompt += f"""
+**重要 - API Schema 定义（生成测试时必须严格遵循）：**
+{schema_content[:6000]}
+"""
+        
+        user_prompt += f"""
+代码结构（部分）：
+{code_structure[:2000]}
+
+请生成覆盖以上功能的集成测试代码。确保 GraphQL 查询语法完全匹配 schema 定义。"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response = await self.chat_completion(
+            messages,
+            temperature=0.3,
+            trace_name="generate_test_code"
+        )
+        
+        # Clean up code block markers if present
+        response = response.strip()
+        if response.startswith("```javascript"):
+            response = response[13:]
+        if response.startswith("```python"):
+            response = response[9:]
+        if response.startswith("```"):
+            response = response[3:]
+        if response.endswith("```"):
+            response = response[:-3]
+            
+        return response.strip()
+
 
 # Singleton instance
 _llm_client: Optional[LLMClient] = None

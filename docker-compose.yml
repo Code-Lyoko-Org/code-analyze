@@ -15,6 +15,7 @@ services:
       - TEMP_DIR=/tmp/code-analyze
     volumes:
       - temp_data:/tmp/code-analyze
+      - /var/run/docker.sock:/var/run/docker.sock # For Docker-in-Docker execution
     depends_on:
       - redis
       - qdrant

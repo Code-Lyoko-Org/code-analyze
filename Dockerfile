@@ -2,9 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including Docker CLI for DinD execution
 RUN apt-get update && apt-get install -y \
     gcc \
+    curl \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for caching

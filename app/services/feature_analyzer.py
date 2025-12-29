@@ -1,6 +1,7 @@
 """Feature analyzer service for LLM-based code analysis."""
 
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional
 
 from app.core.llm_client import get_llm_client
@@ -12,7 +13,10 @@ from app.models.schemas import (
     FeatureAnalysis,
     AnalysisReport,
     ImplementationLocation,
+    FunctionalVerification,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class FeatureAnalyzer:
@@ -134,6 +138,8 @@ class FeatureAnalyzer:
         problem_description: str,
         definitions: List[CodeDefinition],
         session_id: str,
+        enable_verification: bool = False,
+        project_path: Optional[str] = None,
     ) -> AnalysisReport:
         """Generate complete analysis report.
         
@@ -141,6 +147,8 @@ class FeatureAnalyzer:
             problem_description: Original requirement description
             definitions: List of code definitions
             session_id: Session ID
+            enable_verification: Whether to generate and run tests
+            project_path: Path to extracted project (required if enable_verification=True)
             
         Returns:
             Complete AnalysisReport
@@ -161,10 +169,76 @@ class FeatureAnalyzer:
             self.llm_client.generate_execution_plan(code_structure),
         )
         
+        # Generate functional verification if requested
+        functional_verification = None
+        if enable_verification:
+            functional_verification = await self._generate_verification(
+                feature_analyses=feature_analyses,
+                execution_plan=execution_plan,
+                code_structure=code_structure,
+                project_path=project_path,
+            )
+        
         return AnalysisReport(
             feature_analysis=feature_analyses,
             execution_plan_suggestion=execution_plan,
+            functional_verification=functional_verification,
         )
+
+    async def _generate_verification(
+        self,
+        feature_analyses: List[FeatureAnalysis],
+        execution_plan: str,
+        code_structure: str,
+        project_path: Optional[str],
+    ) -> Optional[FunctionalVerification]:
+        """Generate and optionally execute tests for verification.
+        
+        Args:
+            feature_analyses: List of analyzed features
+            execution_plan: How to run the project
+            code_structure: Code structure string
+            project_path: Path to extracted project
+            
+        Returns:
+            FunctionalVerification with generated tests and results
+        """
+        from app.services.test_generator import get_test_generator
+        from app.services.docker_executor import get_docker_executor
+        
+        try:
+            # Generate test code (with project_path for schema extraction)
+            test_generator = get_test_generator()
+            test_code = await test_generator.generate_test_code(
+                feature_analysis=feature_analyses,
+                execution_plan=execution_plan,
+                code_structure=code_structure,
+                project_path=project_path,
+            )
+            
+            # Try to execute tests if project path is provided
+            execution_result = None
+            if project_path:
+                try:
+                    docker_executor = get_docker_executor()
+                    project_type = test_generator._detect_project_type(execution_plan)
+                    execution_result = await docker_executor.execute_tests(
+                        project_path=project_path,
+                        test_code=test_code,
+                        project_type=project_type,
+                    )
+                except Exception as e:
+                    logger.warning(f"Test execution failed: {e}")
+                    # Still return verification with just generated code
+            
+            return FunctionalVerification(
+                generated_test_code=test_code,
+                execution_result=execution_result,
+            )
+            
+        except Exception as e:
+            logger.error(f"Verification generation failed: {e}", exc_info=True)
+            return None
 
     async def generate_report_sync(
         self,

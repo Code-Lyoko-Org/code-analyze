@@ -28,6 +28,7 @@ async def review_code(
     problem_description: str = Form(..., description="Description of required features"),
     code_zip: UploadFile = File(..., description="ZIP file containing the code"),
     skip_cache: bool = Form(False, description="Skip cache and force reprocessing of ZIP"),
+    enable_verification: bool = Form(False, description="Enable functional verification (generate and run tests)"),
 ) -> ReviewResponse:
     """Analyze a codebase and generate a feature location report.
     
@@ -36,6 +37,8 @@ async def review_code(
     
     ZIP processing (AST parsing + indexing) is cached for 24 hours by MD5.
     Same ZIP with different queries will reuse the processed code definitions.
+    
+    Set enable_verification=true to generate integration tests and execute them.
     """
     # Read ZIP content first
     zip_content = await code_zip.read()
@@ -58,6 +61,7 @@ async def review_code(
             print(f"Cache check failed: {e}")
     
     file_extractor = FileExtractor()
+    project_root: Optional[str] = None
     
     try:
         # Process ZIP if not cached
@@ -110,8 +114,13 @@ async def review_code(
             except Exception as e:
                 print(f"Failed to cache processing result: {e}")
             
-            # Clean up extracted files (don't need them anymore)
-            file_extractor.cleanup(session_id)
+            # Clean up extracted files only if verification is not enabled
+            # (verification needs the project files to run tests)
+            if not enable_verification:
+                file_extractor.cleanup(session_id)
+            else:
+                # Keep project_root for verification
+                project_root = project_root
         
         # 5. Analyze features using LLM (always run, as query may differ)
         feature_analyzer = FeatureAnalyzer()
@@ -119,7 +128,13 @@ async def review_code(
             problem_description=problem_description,
             definitions=definitions,
             session_id=session_id,
+            enable_verification=enable_verification,
+            project_path=project_root,
         )
+        
+        # Clean up after verification if it was enabled
+        if enable_verification and project_root:
+            background_tasks.add_task(file_extractor.cleanup, session_id)
         
         return ReviewResponse(
             success=True,

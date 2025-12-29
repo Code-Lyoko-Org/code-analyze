@@ -23,6 +23,24 @@ class FeatureAnalysis(BaseModel):
     )
 
 
+class ExecutionResult(BaseModel):
+    """Result of test execution."""
+    
+    tests_passed: bool = Field(..., description="Whether all tests passed")
+    log: str = Field(..., description="Test execution log output")
+    error: Optional[str] = Field(None, description="Error message if execution failed")
+
+
+class FunctionalVerification(BaseModel):
+    """Functional verification with generated tests."""
+    
+    generated_test_code: str = Field(..., description="Generated test code")
+    execution_result: Optional[ExecutionResult] = Field(
+        None, 
+        description="Result of test execution, None if not executed"
+    )
+
+
 class AnalysisReport(BaseModel):
     """Complete analysis report for a codebase."""
     
@@ -33,6 +51,10 @@ class AnalysisReport(BaseModel):
     execution_plan_suggestion: str = Field(
         "",
         description="Suggestion for how to run the project"
+    )
+    functional_verification: Optional[FunctionalVerification] = Field(
+        None,
+        description="Functional verification result (optional bonus feature)"
     )
 
 
