@@ -28,7 +28,6 @@ class ExecutionResult(BaseModel):
     
     tests_passed: bool = Field(..., description="Whether all tests passed")
     log: str = Field(..., description="Test execution log output")
-    error: Optional[str] = Field(None, description="Error message if execution failed")
 
 
 class FunctionalVerification(BaseModel):
@@ -92,4 +91,3 @@ class ReviewResponse(BaseModel):
     
     success: bool = Field(..., description="Whether the analysis was successful")
     report: Optional[AnalysisReport] = Field(None, description="Analysis report if successful")
-    error: Optional[str] = Field(None, description="Error message if failed")

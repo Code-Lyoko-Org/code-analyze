@@ -72,7 +72,6 @@ async def review_code(
             if not file_paths:
                 return ReviewResponse(
                     success=False,
-                    error="No supported files found in the uploaded ZIP",
                 )
             
             # 2. Parse code to extract definitions
@@ -82,7 +81,6 @@ async def review_code(
             if not definitions:
                 return ReviewResponse(
                     success=False,
-                    error="No code definitions (functions, classes) found in the codebase",
                 )
             
             # 3. Generate embeddings and index code (for semantic search)
@@ -144,14 +142,12 @@ async def review_code(
         logger.error("LLM API timeout during analysis", exc_info=True)
         return ReviewResponse(
             success=False,
-            error="分析超时，请稍后重试。LLM API 响应时间过长。",
         )
     except httpx.HTTPStatusError as e:
         # LLM API error
         logger.error(f"LLM API error: {e.response.status_code}", exc_info=True)
         return ReviewResponse(
             success=False,
-            error=f"LLM API 请求失败 (HTTP {e.response.status_code})，请检查配置。",
         )
     except Exception as e:
         # Clean up on error
@@ -175,7 +171,6 @@ async def review_code(
         
         return ReviewResponse(
             success=False,
-            error=error_msg,
         )
 
 

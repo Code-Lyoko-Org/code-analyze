@@ -106,7 +106,7 @@ class LLMClient:
 
 请以以下 JSON 格式输出分析结果：
 {
-  "feature_description": "功能描述(實現xxx功能)",
+  "feature_description": "功能描述",
   "implementation_location": [
     {
       "file": "文件路径",
