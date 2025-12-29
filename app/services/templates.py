@@ -10,6 +10,11 @@ set -e
 
 cd /app
 
+# Clean database for fresh test environment
+echo "Cleaning database for fresh environment..."
+rm -f *.sqlite *.sqlite3 *.db db.sqlite* database.sqlite* 2>/dev/null || true
+rm -rf .tmp/ dist/ 2>/dev/null || true
+
 # Install dependencies
 echo "Installing dependencies..."
 npm install --legacy-peer-deps 2>&1 | tail -5
