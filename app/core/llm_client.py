@@ -3,11 +3,15 @@
 import os
 import httpx
 import json
+import logging
 from typing import List, Dict, Any, Optional
 
 from langfuse import Langfuse
 
 from app.config import get_settings
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
@@ -77,10 +81,29 @@ class LLMClient:
                 model_parameters={"temperature": temperature},
             )
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(url, headers=headers, json=payload)
+            
+            # Log response status for debugging
+            if response.status_code != 200:
+                logger.error(f"LLM API error: {response.status_code} - {response.text[:500]}")
+            
             response.raise_for_status()
-            data = response.json()
+            
+            # Handle empty response
+            if not response.content:
+                logger.error("LLM API returned empty response")
+                raise ValueError("LLM API 返回空响应")
+            
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"LLM API response not valid JSON: {response.text[:500]}")
+                raise ValueError(f"LLM API 响应格式错误: {response.text[:100]}")
+        
+        if "choices" not in data or not data["choices"]:
+            logger.error(f"LLM API response missing choices: {data}")
+            raise ValueError("LLM API 响应缺少 choices 字段")
         
         result = data["choices"][0]["message"]["content"]
         

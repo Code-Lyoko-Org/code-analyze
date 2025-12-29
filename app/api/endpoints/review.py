@@ -1,9 +1,14 @@
 """Review API endpoint for code analysis."""
 
 import uuid
+import logging
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, File, Form, UploadFile, BackgroundTasks
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 from app.services.file_extractor import FileExtractor
 from app.services.code_parser import CodeParser
@@ -121,6 +126,20 @@ async def review_code(
             report=report,
         )
         
+    except httpx.TimeoutException:
+        # LLM API timeout
+        logger.error("LLM API timeout during analysis", exc_info=True)
+        return ReviewResponse(
+            success=False,
+            error="分析超时，请稍后重试。LLM API 响应时间过长。",
+        )
+    except httpx.HTTPStatusError as e:
+        # LLM API error
+        logger.error(f"LLM API error: {e.response.status_code}", exc_info=True)
+        return ReviewResponse(
+            success=False,
+            error=f"LLM API 请求失败 (HTTP {e.response.status_code})，请检查配置。",
+        )
     except Exception as e:
         # Clean up on error
         if not cache_hit:
@@ -131,10 +150,19 @@ async def review_code(
             except:
                 pass
         
-        import traceback
+        # Log the full traceback, return friendly message
+        logger.error(f"Analysis failed: {e}", exc_info=True)
+        
+        # Return user-friendly error message
+        error_msg = "分析过程中发生错误，请稍后重试。"
+        if "timeout" in str(e).lower():
+            error_msg = "分析超时，请稍后重试。"
+        elif "connection" in str(e).lower():
+            error_msg = "无法连接到 LLM 服务，请检查配置。"
+        
         return ReviewResponse(
             success=False,
-            error=f"Analysis failed: {str(e)}\n{traceback.format_exc()}",
+            error=error_msg,
         )
 
 
