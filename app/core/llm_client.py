@@ -1,30 +1,44 @@
-"""LLM Client using OpenAI-compatible API format."""
+"""LLM Client using OpenAI-compatible API format with Langfuse observability."""
 
+import os
 import httpx
-import logging
+import json
 from typing import List, Dict, Any, Optional
+
+from langfuse import Langfuse
 
 from app.config import get_settings
 
-# Configure logger
-logger = logging.getLogger("llm_client")
-logging.basicConfig(level=logging.INFO)
-
 
 class LLMClient:
-    """Client for OpenAI-compatible LLM API."""
+    """Client for OpenAI-compatible LLM API with Langfuse tracing."""
 
     def __init__(self):
         self.settings = get_settings()
         self.base_url = self.settings.llm_api_url.rstrip("/")
         self.api_key = self.settings.llm_api_key
         self.model = self.settings.llm_model
+        
+        # Initialize Langfuse client using os.getenv (Langfuse reads these directly)
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", self.settings.langfuse_public_key)
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY", self.settings.langfuse_secret_key)
+        host = os.getenv("LANGFUSE_HOST", self.settings.langfuse_host)
+        
+        if public_key and secret_key:
+            self.langfuse = Langfuse(
+                public_key=public_key,
+                secret_key=secret_key,
+                host=host,
+            )
+        else:
+            self.langfuse = None
 
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        trace_name: str = "chat_completion",
     ) -> str:
         """Send a chat completion request to the LLM API.
         
@@ -32,6 +46,7 @@ class LLMClient:
             messages: List of message dicts with 'role' and 'content'
             temperature: Sampling temperature
             max_tokens: Maximum tokens to generate
+            trace_name: Name for Langfuse trace
             
         Returns:
             The assistant's response content
@@ -52,14 +67,15 @@ class LLMClient:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
-        # Log the full prompt
-        logger.info("=" * 60)
-        logger.info(f"LLM Request to {self.model}")
-        logger.info("=" * 60)
-        for msg in messages:
-            logger.info(f"[{msg['role'].upper()}]")
-            logger.info(msg['content'][:2000] + ("..." if len(msg['content']) > 2000 else ""))
-            logger.info("-" * 40)
+        # Create Langfuse generation if available
+        generation = None
+        if self.langfuse:
+            generation = self.langfuse.start_generation(
+                name=trace_name,
+                model=self.model,
+                input=messages,
+                model_parameters={"temperature": temperature},
+            )
 
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(url, headers=headers, json=payload)
@@ -68,10 +84,10 @@ class LLMClient:
         
         result = data["choices"][0]["message"]["content"]
         
-        # Log the response
-        logger.info(f"[ASSISTANT RESPONSE]")
-        logger.info(result[:1000] + ("..." if len(result) > 1000 else ""))
-        logger.info("=" * 60)
+        # End Langfuse generation with output
+        if generation:
+            generation.update(output=result)
+            generation.end()
         
         return result
 
@@ -118,12 +134,14 @@ class LLMClient:
             {"role": "user", "content": user_prompt},
         ]
 
-        response = await self.chat_completion(messages, temperature=0.3)
+        response = await self.chat_completion(
+            messages, 
+            temperature=0.3, 
+            trace_name=f"analyze_feature:{feature_description[:30]}"
+        )
         
         # Parse JSON from response
-        import json
         try:
-            # Try to extract JSON from response
             response = response.strip()
             if response.startswith("```json"):
                 response = response[7:]
@@ -160,9 +178,12 @@ class LLMClient:
             {"role": "user", "content": f"需求描述:\n{problem_description}"},
         ]
 
-        response = await self.chat_completion(messages, temperature=0.3)
+        response = await self.chat_completion(
+            messages, 
+            temperature=0.3,
+            trace_name="extract_features"
+        )
         
-        import json
         try:
             response = response.strip()
             if response.startswith("```json"):
@@ -173,7 +194,6 @@ class LLMClient:
                 response = response[:-3]
             return json.loads(response.strip())
         except json.JSONDecodeError:
-            # Fallback: split by common delimiters
             return [problem_description]
 
     async def generate_execution_plan(self, code_structure: str) -> str:
@@ -193,7 +213,11 @@ class LLMClient:
             {"role": "user", "content": f"代码结构:\n{code_structure}"},
         ]
 
-        return await self.chat_completion(messages, temperature=0.5)
+        return await self.chat_completion(
+            messages, 
+            temperature=0.5,
+            trace_name="generate_execution_plan"
+        )
 
 
 # Singleton instance
@@ -206,4 +230,3 @@ def get_llm_client() -> LLMClient:
     if _llm_client is None:
         _llm_client = LLMClient()
     return _llm_client
-

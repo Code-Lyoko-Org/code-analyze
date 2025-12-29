@@ -18,6 +18,7 @@ dependencies = [
     "tree-sitter-typescript>=0.21.0",
     "tree-sitter-javascript>=0.21.0",
     "python-dotenv>=1.0.0",
+    "langfuse>=3.11.2",
 ]
 
 [project.optional-dependencies]

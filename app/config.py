@@ -68,9 +68,15 @@ class Settings(BaseSettings):
     # Celery worker settings
     celery_concurrency: int = 4
 
+    # Langfuse Configuration (optional, for LLM observability)
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Allow extra env vars without error
 
 
 @lru_cache()
