@@ -1,8 +1,9 @@
-"""Embeddings generation using OpenAI-compatible API."""
+"""Embeddings generation using official OpenAI SDK."""
 
-import httpx
 import logging
 from typing import List, Optional
+
+from openai import AsyncOpenAI
 
 from app.config import get_settings
 
@@ -10,17 +11,32 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingsClient:
-    """Client for generating text embeddings using OpenAI API."""
+    """Client for generating text embeddings using OpenAI SDK."""
 
     def __init__(self):
         self.settings = get_settings()
-        self.base_url = self.settings.embedding_api_url.rstrip("/")
         self.model = self.settings.embedding_model
         self.dimension = self.settings.embedding_dimension
-        self.api_key = self.settings.embedding_api_key
+        
+        # Initialize OpenAI client for embeddings
+        api_url = self.settings.embedding_api_url.rstrip("/")
+        
+        if "api.openai.com" in api_url:
+            # Official OpenAI - use default
+            self.client = AsyncOpenAI(
+                api_key=self.settings.embedding_api_key,
+            )
+        else:
+            # Third-party API - set base_url
+            if not api_url.endswith("/v1"):
+                api_url = f"{api_url}/v1"
+            self.client = AsyncOpenAI(
+                api_key=self.settings.embedding_api_key,
+                base_url=api_url,
+            )
 
     async def create_embedding(self, text: str) -> List[float]:
-        """Create an embedding for a single text using OpenAI API.
+        """Create an embedding for a single text using OpenAI SDK.
         
         Args:
             text: Text to embed
@@ -28,30 +44,15 @@ class EmbeddingsClient:
         Returns:
             Embedding vector as list of floats
         """
-        # Build URL - handle both base URLs with and without /v1
-        if self.base_url.endswith("/v1"):
-            url = f"{self.base_url}/embeddings"
-        else:
-            url = f"{self.base_url}/v1/embeddings"
-        
-        headers = {
-            "Content-Type": "application/json",
-        }
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        
-        payload = {
-            "model": self.model,
-            "input": text,
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-        
-        # OpenAI API returns: {"data": [{"embedding": [...]}]}
-        return data["data"][0]["embedding"]
+        try:
+            response = await self.client.embeddings.create(
+                model=self.model,
+                input=text,
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Embedding API error: {e}", exc_info=True)
+            raise
 
     async def create_embeddings_batch(
         self, 
@@ -67,39 +68,27 @@ class EmbeddingsClient:
         Returns:
             List of embedding vectors (same order as input texts)
         """
-        # Build URL - handle both base URLs with and without /v1
-        if self.base_url.endswith("/v1"):
-            url = f"{self.base_url}/embeddings"
-        else:
-            url = f"{self.base_url}/v1/embeddings"
-        
-        headers = {
-            "Content-Type": "application/json",
-        }
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        
         all_embeddings = []
         
         # Process in batches
         for i in range(0, len(texts), batch_size):
             batch = texts[i:i + batch_size]
             
-            payload = {
-                "model": self.model,
-                "input": batch,
-            }
-            
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(url, json=payload, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-            
-            # Extract embeddings in order
-            batch_embeddings = [item["embedding"] for item in data["data"]]
-            all_embeddings.extend(batch_embeddings)
-            
-            logger.info(f"Embedded batch {i//batch_size + 1}, total: {len(all_embeddings)}/{len(texts)}")
+            try:
+                response = await self.client.embeddings.create(
+                    model=self.model,
+                    input=batch,
+                )
+                
+                # Extract embeddings in order
+                batch_embeddings = [item.embedding for item in response.data]
+                all_embeddings.extend(batch_embeddings)
+                
+                logger.info(f"Embedded batch {i//batch_size + 1}, total: {len(all_embeddings)}/{len(texts)}")
+                
+            except Exception as e:
+                logger.error(f"Embedding batch failed: {e}", exc_info=True)
+                raise
         
         return all_embeddings
 

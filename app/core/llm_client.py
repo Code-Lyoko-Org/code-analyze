@@ -1,32 +1,47 @@
-"""LLM Client using OpenAI-compatible API format with Langfuse observability."""
+"""LLM client using official OpenAI SDK."""
 
-import os
-import httpx
 import json
 import logging
 from typing import List, Dict, Any, Optional
 
+from openai import AsyncOpenAI
 from langfuse import Langfuse
 
 from app.config import get_settings
 
-# Configure logger
 logger = logging.getLogger(__name__)
 
 
 class LLMClient:
-    """Client for OpenAI-compatible LLM API with Langfuse tracing."""
+    """Client for LLM API calls using OpenAI SDK."""
 
     def __init__(self):
         self.settings = get_settings()
-        self.base_url = self.settings.llm_api_url.rstrip("/")
-        self.api_key = self.settings.llm_api_key
         self.model = self.settings.llm_model
         
-        # Initialize Langfuse client using os.getenv (Langfuse reads these directly)
-        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", self.settings.langfuse_public_key)
-        secret_key = os.getenv("LANGFUSE_SECRET_KEY", self.settings.langfuse_secret_key)
-        host = os.getenv("LANGFUSE_HOST", self.settings.langfuse_host)
+        # Initialize OpenAI client
+        # For official OpenAI API, don't set base_url (SDK uses default)
+        # For third-party APIs, set base_url
+        api_url = self.settings.llm_api_url.rstrip("/")
+        
+        if "api.openai.com" in api_url:
+            # Official OpenAI - use default
+            self.client = AsyncOpenAI(
+                api_key=self.settings.llm_api_key,
+            )
+        else:
+            # Third-party API - set base_url
+            if not api_url.endswith("/v1"):
+                api_url = f"{api_url}/v1"
+            self.client = AsyncOpenAI(
+                api_key=self.settings.llm_api_key,
+                base_url=api_url,
+            )
+        
+        # Initialize Langfuse for observability (optional)
+        public_key = self.settings.langfuse_public_key
+        secret_key = self.settings.langfuse_secret_key
+        host = self.settings.langfuse_host
         
         if public_key and secret_key:
             self.langfuse = Langfuse(
@@ -40,86 +55,52 @@ class LLMClient:
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.7,
+        temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         trace_name: str = "chat_completion",
     ) -> str:
-        """Send a chat completion request to the LLM API.
+        """Send a chat completion request using OpenAI SDK.
         
         Args:
             messages: List of message dicts with 'role' and 'content'
-            temperature: Sampling temperature
+            temperature: Sampling temperature (default 1.0 for compatibility with all models)
             max_tokens: Maximum tokens to generate
             trace_name: Name for Langfuse trace
             
         Returns:
             The assistant's response content
         """
-        # Build URL - handle both base URLs with and without /v1
-        if self.base_url.endswith("/v1"):
-            url = f"{self.base_url}/chat/completions"
-        else:
-            url = f"{self.base_url}/v1/chat/completions"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
-        
-        payload: Dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-        }
-        
-        # Only add temperature if not default (1.0) - some models like o1 don't support it
-        if temperature != 1.0:
-            payload["temperature"] = temperature
-        
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        try:
+            # Build kwargs
+            kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+            }
+            
+            # Only add temperature if not default (some models don't support it)
+            if temperature != 1.0:
+                kwargs["temperature"] = temperature
+            
+            if max_tokens:
+                kwargs["max_tokens"] = max_tokens
 
-        # Create Langfuse generation if available
-        generation = None
-        if self.langfuse:
-            generation = self.langfuse.start_generation(
-                name=trace_name,
-                model=self.model,
-                input=messages,
-                model_parameters={"temperature": temperature},
-            )
-
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
+            # Call OpenAI API
+            response = await self.client.chat.completions.create(**kwargs)
             
-            # Log response status for debugging
-            if response.status_code != 200:
-                logger.error(f"LLM API error: {response.status_code} - {response.text[:500]}")
+            content = response.choices[0].message.content
             
-            response.raise_for_status()
+            if not content:
+                raise ValueError("LLM 返回空响应")
             
-            # Handle empty response
-            if not response.content:
-                logger.error("LLM API returned empty response")
-                raise ValueError("LLM API 返回空响应")
+            # Log usage
+            if response.usage:
+                logger.info(f"LLM usage: {response.usage.prompt_tokens} + {response.usage.completion_tokens} tokens")
             
-            try:
-                data = response.json()
-            except json.JSONDecodeError as e:
-                logger.error(f"LLM API response not valid JSON: {response.text[:500]}")
-                raise ValueError(f"LLM API 响应格式错误: {response.text[:100]}")
-        
-        if "choices" not in data or not data["choices"]:
-            logger.error(f"LLM API response missing choices: {data}")
-            raise ValueError("LLM API 响应缺少 choices 字段")
-        
-        result = data["choices"][0]["message"]["content"]
-        
-        # End Langfuse generation with output
-        if generation:
-            generation.update(output=result)
-            generation.end()
-        
-        return result
+            return content
+            
+        except Exception as e:
+            logger.error(f"LLM API error: {e}", exc_info=True)
+            raise
 
     async def analyze_feature(
         self,
@@ -161,16 +142,15 @@ class LLMClient:
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": f"功能: {feature_description}\n\n代码结构:\n{code_structure}"},
         ]
 
         response = await self.chat_completion(
             messages, 
-            temperature=1.0, 
             trace_name=f"analyze_feature:{feature_description[:30]}"
         )
         
-        # Parse JSON from response
+        # Parse JSON response
         try:
             response = response.strip()
             if response.startswith("```json"):
@@ -181,27 +161,36 @@ class LLMClient:
                 response = response[:-3]
             return json.loads(response.strip())
         except json.JSONDecodeError:
+            logger.warning(f"Failed to parse LLM response as JSON: {response[:200]}")
             return {
                 "feature_description": feature_description,
                 "implementation_location": [],
-                "error": "Failed to parse LLM response"
             }
 
     async def extract_features(self, problem_description: str) -> List[str]:
         """Extract individual features from a problem description.
         
         Args:
-            problem_description: The full problem/requirement description
+            problem_description: Full problem/requirement description
             
         Returns:
             List of individual feature descriptions
         """
-        system_prompt = """你是一个需求分析专家。从给定的需求描述中提取独立的功能点。
+        system_prompt = """你是一个需求分析专家。从需求描述中提取**用户直接使用的业务功能**。
 
-请以 JSON 数组格式输出功能列表，每个元素是一个功能描述字符串。
-例如: ["创建频道", "发送消息", "列出消息"]
+重要规则：
+1. 只提取重要的模块和功能
+2. 忽略技术实现细节（如：项目结构、错误处理、日志、容器化、测试策略）
+3. 忽略数据模型定义（如：Channel模型、Message模型）
+4. 每个功能用"实现XXX功能"的格式描述
 
-只输出 JSON 数组，不要包含其他文本。"""
+示例输入：
+"Create a multi-channel forum api. Channel Model: { id, name }. Feature: create a channel, write messages in a channel, list messages in a channel"
+
+示例输出：
+["实现创建频道功能", "实现发送消息功能", "实现列出消息功能"]
+
+只输出JSON数组，不要其他内容。"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -210,10 +199,10 @@ class LLMClient:
 
         response = await self.chat_completion(
             messages, 
-            temperature=1.0,
             trace_name="extract_features"
         )
         
+        # Parse JSON response
         try:
             response = response.strip()
             if response.startswith("```json"):
@@ -222,8 +211,12 @@ class LLMClient:
                 response = response[3:]
             if response.endswith("```"):
                 response = response[:-3]
-            return json.loads(response.strip())
+            features = json.loads(response.strip())
+            if isinstance(features, list):
+                return features
+            return [features]
         except json.JSONDecodeError:
+            logger.warning(f"Failed to parse features as JSON: {response[:200]}")
             return [problem_description]
 
     async def generate_execution_plan(self, code_structure: str) -> str:
@@ -245,7 +238,6 @@ class LLMClient:
 
         return await self.chat_completion(
             messages, 
-            temperature=1.0,
             trace_name="generate_execution_plan"
         )
 
@@ -276,10 +268,7 @@ class LLMClient:
 1. 使用 supertest 和 mocha 框架
 2. 测试服务运行在 http://localhost:3000
 3. 如果是 GraphQL API，使用 POST /graphql 发送查询
-4. **重要**：GraphQL 查询必须严格遵循提供的 schema 定义，包括：
-   - Mutation/Query 名称必须完全匹配
-   - Input 参数名称必须完全匹配（如 createChannelInput 不能写成 input）
-   - 字段类型必须正确（Int vs String）
+4. **重要**：GraphQL 查询必须严格遵循提供的 schema 定义
 5. 使用 assert 进行断言
 6. 只输出可执行的 JavaScript 代码，不要包含其他文本
 
@@ -325,7 +314,6 @@ def test_feature():
 {execution_plan}
 """
         
-        # Add schema content if available (important for accurate GraphQL queries)
         if schema_content:
             user_prompt += f"""
 **重要 - API Schema 定义（生成测试时必须严格遵循）：**
@@ -345,7 +333,6 @@ def test_feature():
 
         response = await self.chat_completion(
             messages,
-            temperature=1.0,
             trace_name="generate_test_code"
         )
         
