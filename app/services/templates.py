@@ -8,7 +8,7 @@ Use .format() or string Template for variable substitution.
 NODEJS_TEST_SCRIPT = """#!/bin/bash
 set -e
 
-cd /app
+# Working directory is set by Docker -w flag
 
 # Clean database for fresh test environment
 echo "Cleaning database for fresh environment..."
@@ -64,7 +64,7 @@ exit $TEST_EXIT_CODE
 PYTHON_TEST_SCRIPT = """#!/bin/bash
 set -e
 
-cd /app
+# Working directory is set by Docker -w flag
 
 # Install dependencies
 echo "Installing dependencies..."

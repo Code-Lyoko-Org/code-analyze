@@ -4,7 +4,6 @@ python-multipart>=0.0.6
 httpx>=0.25.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
-celery>=5.3.0
 redis>=5.0.0
 qdrant-client>=1.7.0
 tree-sitter>=0.21.0

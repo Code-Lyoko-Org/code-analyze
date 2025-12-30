@@ -1,11 +1,10 @@
-.PHONY: install dev celery test clean docker-deps clear-cache help
+.PHONY: install dev test clean docker-deps clear-cache help
 
 # Default target
 help:
 	@echo "Available commands:"
 	@echo "  make install      - Install dependencies with uv"
 	@echo "  make dev          - Start FastAPI development server"
-	@echo "  make celery       - Start Celery worker"
 	@echo "  make test         - Run tests"
 	@echo "  make docker-deps  - Start Redis and Qdrant with Docker"
 	@echo "  make clear-cache  - Clear Redis cache and Qdrant collection"
@@ -18,10 +17,6 @@ install:
 # Start FastAPI development server
 dev:
 	uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-# Start Celery worker
-celery:
-	uv run celery -A app.celery_app worker -l info -c 4
 
 # Run tests
 test:

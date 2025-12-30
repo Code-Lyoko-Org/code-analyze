@@ -278,14 +278,3 @@ class FeatureAnalyzer:
             logger.error(f"Verification generation failed: {e}", exc_info=True)
             return None
 
-    async def generate_report_sync(
-        self,
-        problem_description: str,
-        definitions: List[CodeDefinition],
-        session_id: str,
-    ) -> AnalysisReport:
-        """Synchronous wrapper for generate_report.
-        
-        For use with Celery or other sync contexts.
-        """
-        return await self.generate_report(problem_description, definitions, session_id)

@@ -66,9 +66,6 @@ class Settings(BaseSettings):
     max_block_chars: int = 1000            # Max chars per code block
     max_llm_context_chars: int = 50000     # Max chars for LLM prompt
 
-    # Celery worker settings
-    celery_concurrency: int = 4
-
     # Langfuse Configuration (optional, for LLM observability)
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

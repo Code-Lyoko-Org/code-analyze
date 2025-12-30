@@ -20,6 +20,9 @@ class DockerExecutor:
     def __init__(self):
         self.settings = get_settings()
         self._check_docker_available()
+        # Detect if running in Docker (for volume mounting)
+        self._in_docker = os.path.exists('/.dockerenv')
+        self._volume_name = "code-analyze_temp_data"  # Docker Compose volume name
 
     def _check_docker_available(self) -> bool:
         """Check if Docker is available."""
@@ -107,14 +110,26 @@ class DockerExecutor:
         
         # Run Docker container (isolated network, no --network host)
         logger.info("      → Starting Docker container (node:18-alpine)...")
+        
+        # When running in Docker, use volume name instead of path
+        # because the container path is not visible to host Docker daemon
+        if self._in_docker:
+            # Get relative path within the volume
+            relative_path = Path(project_path).relative_to(self.settings.temp_dir)
+            volume_mount = f"{self._volume_name}:/tmp/code-analyze"
+            work_dir = f"/tmp/code-analyze/{relative_path}"
+        else:
+            volume_mount = f"{project_path}:/app"
+            work_dir = "/app"
+        
         docker_cmd = [
             "docker", "run",
             "--rm",
             "--name", container_name,
-            "-v", f"{project_path}:/app",
-            "-w", "/app",
+            "-v", volume_mount,
+            "-w", work_dir,
             "node:18-alpine",
-            "/bin/sh", "-c", "apk add --no-cache bash curl > /dev/null 2>&1 && bash /app/run_tests.sh"
+            "/bin/sh", "-c", "apk add --no-cache bash curl > /dev/null 2>&1 && bash run_tests.sh"
         ]
         
         logger.info("      → Executing tests in container...")
@@ -150,14 +165,24 @@ class DockerExecutor:
         run_script_path.chmod(0o755)
         
         logger.info("      → Starting Docker container (python:3.11-slim)...")
+        
+        # When running in Docker, use volume name instead of path
+        if self._in_docker:
+            relative_path = Path(project_path).relative_to(self.settings.temp_dir)
+            volume_mount = f"{self._volume_name}:/tmp/code-analyze"
+            work_dir = f"/tmp/code-analyze/{relative_path}"
+        else:
+            volume_mount = f"{project_path}:/app"
+            work_dir = "/app"
+        
         docker_cmd = [
             "docker", "run",
             "--rm",
             "--name", container_name,
-            "-v", f"{project_path}:/app",
-            "-w", "/app",
+            "-v", volume_mount,
+            "-w", work_dir,
             "python:3.11-slim",
-            "/bin/bash", "-c", "apt-get update > /dev/null && apt-get install -y curl > /dev/null && bash /app/run_tests.sh"
+            "/bin/bash", "-c", "apt-get update > /dev/null && apt-get install -y curl > /dev/null && bash run_tests.sh"
         ]
         
         logger.info("      → Executing tests in container...")
