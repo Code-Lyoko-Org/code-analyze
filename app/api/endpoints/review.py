@@ -2,6 +2,7 @@
 
 import uuid
 import logging
+import time
 from typing import Optional
 
 import httpx
@@ -42,6 +43,11 @@ async def review_code(
     zip_content = await code_zip.read()
     cache_service = get_cache_service()
     
+    total_start = time.time()
+    logger.info("=" * 60)
+    logger.info("🚀 Starting code analysis...")
+    logger.info("=" * 60)
+    
     session_id: Optional[str] = None
     definitions: list = []
     cache_hit = False
@@ -54,9 +60,9 @@ async def review_code(
                 session_id = cached_session_id
                 definitions = [CodeDefinition(**d) for d in cached_definitions]
                 cache_hit = True
-                print(f"Cache hit! Reusing {len(definitions)} definitions from session {session_id}")
+                logger.info(f"✅ Cache hit! Reusing {len(definitions)} definitions")
         except Exception as e:
-            print(f"Cache check failed: {e}")
+            logger.warning(f"⚠️ Cache check failed: {e}")
     
     file_extractor = FileExtractor()
     project_root: Optional[str] = None
@@ -67,7 +73,10 @@ async def review_code(
             session_id = str(uuid.uuid4())
             
             # 1. Extract ZIP file
+            logger.info("📦 [1/5] Extracting ZIP file...")
+            t_start = time.time()
             project_root, file_paths = file_extractor.extract_zip(zip_content, session_id)
+            logger.info(f"   ✓ Extracted {len(file_paths)} files ({time.time() - t_start:.1f}s)")
             
             if not file_paths:
                 return ReviewResponse(
@@ -75,8 +84,11 @@ async def review_code(
                 )
             
             # 2. Parse code to extract definitions
+            logger.info("🔍 [2/5] Parsing code structure...")
+            t_start = time.time()
             code_parser = CodeParser()
             definitions = code_parser.parse_files(project_root, file_paths)
+            logger.info(f"   ✓ Found {len(definitions)} definitions ({time.time() - t_start:.1f}s)")
             
             if not definitions:
                 return ReviewResponse(
@@ -84,7 +96,9 @@ async def review_code(
                 )
             
             # 3. Generate embeddings and index code (for semantic search)
+            logger.info("🧮 [3/5] Generating embeddings...")
             try:
+                t_embed_start = time.time()
                 embeddings_client = get_embeddings_client()
                 code_indexer = CodeIndexer()
                 
@@ -99,16 +113,17 @@ async def review_code(
                 
                 # Index into vector store
                 code_indexer.index_definitions(definitions, embeddings, session_id)
+                logger.info(f"   ✓ Indexed {len(definitions)} definitions ({time.time() - t_embed_start:.1f}s)")
             except Exception as e:
                 # Continue without vector search if embedding/indexing fails
-                print(f"Indexing failed (continuing without semantic search): {e}")
+                logger.warning(f"   ⚠️ Indexing failed (continuing): {e}")
             
             # 4. Cache the processing result
             try:
                 cache_service.cache_definitions(zip_content, session_id, definitions)
-                print(f"Cached {len(definitions)} definitions for session {session_id}")
+                logger.info(f"   ✓ Cached {len(definitions)} definitions")
             except Exception as e:
-                print(f"Failed to cache processing result: {e}")
+                logger.warning(f"   ⚠️ Cache failed: {e}")
             
             # Clean up extracted files only if verification is not enabled
             # (verification needs the project files to run tests)
@@ -119,6 +134,8 @@ async def review_code(
                 project_root = project_root
         
         # 5. Analyze features using LLM (always run, as query may differ)
+        logger.info("🤖 [4/5] Analyzing features with LLM...")
+        t_analysis_start = time.time()
         feature_analyzer = FeatureAnalyzer()
         report = await feature_analyzer.generate_report(
             problem_description=problem_description,
@@ -127,10 +144,15 @@ async def review_code(
             enable_verification=enable_verification,
             project_path=project_root,
         )
+        logger.info(f"   ✓ Analysis complete ({time.time() - t_analysis_start:.1f}s)")
         
         # Clean up after verification if it was enabled
         if enable_verification and project_root:
             background_tasks.add_task(file_extractor.cleanup, session_id)
+        
+        logger.info("=" * 60)
+        logger.info(f"✅ Done! Total time: {time.time() - total_start:.1f}s")
+        logger.info("=" * 60)
         
         return ReviewResponse(
             success=True,

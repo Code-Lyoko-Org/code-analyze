@@ -157,13 +157,20 @@ class FeatureAnalyzer:
         Returns:
             Complete AnalysisReport
         """
+        import time
+        
         # Generate code structure
         code_structure = self.code_parser.generate_code_structure(definitions)
         
         # Extract features first (needed for analysis)
+        logger.info("      → Extracting features from problem description...")
+        t_start = time.time()
         features = await self.extract_features(problem_description)
+        logger.info(f"      → Found {len(features)} features ({time.time() - t_start:.1f}s)")
         
         # Run feature analysis AND execution plan generation in parallel
+        logger.info("      → Analyzing feature implementations (parallel)...")
+        t_start = time.time()
         feature_analyses, execution_plan = await asyncio.gather(
             self.analyze_all_features(
                 features=features,
@@ -172,16 +179,22 @@ class FeatureAnalyzer:
             ),
             self.llm_client.generate_execution_plan(code_structure),
         )
+        logger.info(f"      → {len(feature_analyses)} features analyzed ({time.time() - t_start:.1f}s)")
         
         # Generate functional verification if requested
         functional_verification = None
         if enable_verification:
+            logger.info("🧪 [5/5] Running functional verification...")
+            t_start = time.time()
             functional_verification = await self._generate_verification(
                 feature_analyses=feature_analyses,
                 execution_plan=execution_plan,
                 code_structure=code_structure,
                 project_path=project_path,
             )
+            if functional_verification and functional_verification.execution_result:
+                status = "✅ PASSED" if functional_verification.execution_result.tests_passed else "❌ FAILED"
+                logger.info(f"      → Tests {status} ({time.time() - t_start:.1f}s)")
         
         return AnalysisReport(
             feature_analysis=feature_analyses,
