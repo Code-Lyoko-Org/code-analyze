@@ -37,7 +37,9 @@ class FeatureAnalyzer:
         Returns:
             List of individual feature descriptions
         """
-        return await self.llm_client.extract_features(problem_description)
+        features = await self.llm_client.extract_features(problem_description)
+        logger.info(f"Extracted {len(features)} features: {features}")
+        return features
 
     async def analyze_single_feature(
         self,
@@ -123,6 +125,7 @@ class FeatureAnalyzer:
         analyses = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
+                logger.warning(f"Feature analysis failed for '{features[i]}': {result}")
                 # Create empty analysis for failed ones
                 analyses.append(FeatureAnalysis(
                     feature_description=features[i],
@@ -131,6 +134,7 @@ class FeatureAnalyzer:
             else:
                 analyses.append(result)
         
+        logger.info(f"Analyzed {len(analyses)} features, {sum(1 for a in analyses if a.implementation_location)} have locations")
         return analyses
 
     async def generate_report(

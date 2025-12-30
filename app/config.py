@@ -9,10 +9,10 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # LLM Configuration
-    llm_api_url: str = "https://x666.me"
+    # LLM Configuration (supports OpenAI-compatible APIs)
+    llm_api_url: str = "https://api.openai.com/v1"  # Base URL for LLM API
     llm_api_key: str = ""
-    llm_model: str = "gemini-2.5-pro"
+    llm_model: str = "gpt-4o-mini"
 
     # Qdrant Configuration
     qdrant_host: str = "localhost"
@@ -26,11 +26,11 @@ class Settings(BaseSettings):
     debug: bool = False
     temp_dir: str = "/tmp/code-analyze"
 
-    # Embedding Configuration (OpenAI compatible)
-    embedding_api_url: str = "https://api.openai.com/v1"  # OpenAI API
-    embedding_api_key: str = ""  # OpenAI API key (can be same as llm_api_key)
-    embedding_model: str = "text-embedding-3-small"  # OpenAI embedding model
-    embedding_dimension: int = 1536  # text-embedding-3-small dimension
+    # Embedding Configuration (supports OpenAI-compatible APIs)
+    embedding_api_url: str = "https://api.openai.com/v1"  # Base URL for Embedding API
+    embedding_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
 
     # Supported file extensions for code analysis
     supported_extensions: List[str] = [

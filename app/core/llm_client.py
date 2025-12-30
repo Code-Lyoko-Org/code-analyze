@@ -1,13 +1,12 @@
-"""LLM client using official OpenAI SDK with optional Langfuse observability."""
+"""LLM Client using OpenAI-compatible API format with Langfuse observability."""
 
+import os
+import httpx
 import json
 import logging
-import os
 from typing import List, Dict, Any, Optional
 
-from dotenv import load_dotenv
-
-load_dotenv()
+from langfuse import Langfuse
 
 from app.config import get_settings
 from app.core.prompts import (
@@ -28,25 +27,30 @@ from app.core.prompts import (
 
 logger = logging.getLogger(__name__)
 
-# Conditionally import OpenAI client based on Langfuse config
-if os.getenv("LANGFUSE_PUBLIC_KEY"):
-    from langfuse.openai import AsyncOpenAI
-    logger.info("Langfuse tracing enabled")
-else:
-    from openai import AsyncOpenAI
-
 
 class LLMClient:
-    """Client for LLM API calls using OpenAI SDK with optional Langfuse tracing."""
+    """Client for OpenAI-compatible LLM API with Langfuse tracing."""
 
     def __init__(self):
         self.settings = get_settings()
+        self.base_url = self.settings.llm_api_url.rstrip("/")
+        self.api_key = self.settings.llm_api_key
         self.model = self.settings.llm_model
         
-        # Initialize OpenAI client
-        self.client = AsyncOpenAI(
-            api_key=self.settings.llm_api_key,
-        )
+        # Initialize Langfuse client
+        public_key = os.getenv("LANGFUSE_PUBLIC_KEY", self.settings.langfuse_public_key)
+        secret_key = os.getenv("LANGFUSE_SECRET_KEY", self.settings.langfuse_secret_key)
+        host = os.getenv("LANGFUSE_HOST", self.settings.langfuse_host)
+        
+        if public_key and secret_key:
+            self.langfuse = Langfuse(
+                public_key=public_key,
+                secret_key=secret_key,
+                host=host,
+            )
+            logger.info("Langfuse tracing enabled")
+        else:
+            self.langfuse = None
 
     async def chat_completion(
         self,
@@ -55,33 +59,71 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         trace_name: str = "chat_completion",
     ) -> str:
-        """Send a chat completion request using OpenAI SDK."""
-        try:
-            kwargs: Dict[str, Any] = {
-                "model": self.model,
-                "messages": messages,
-            }
-            
-            if temperature != 1.0:
-                kwargs["temperature"] = temperature
-            
-            if max_tokens:
-                kwargs["max_tokens"] = max_tokens
+        """Send a chat completion request to the LLM API."""
+        # Build URL
+        if self.base_url.endswith("/v1"):
+            url = f"{self.base_url}/chat/completions"
+        else:
+            url = f"{self.base_url}/v1/chat/completions"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+        }
+        
+        if temperature != 1.0:
+            payload["temperature"] = temperature
+        
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
 
-            response = await self.client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content
+        # Create Langfuse generation if available
+        generation = None
+        if self.langfuse:
+            generation = self.langfuse.start_generation(
+                name=trace_name,
+                model=self.model,
+                input=messages,
+                model_parameters={"temperature": temperature},
+            )
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
             
-            if not content:
-                raise ValueError("LLM 返回空响应")
+            if response.status_code != 200:
+                logger.error(f"LLM API error: {response.status_code} - {response.text[:500]}")
             
-            if response.usage:
-                logger.info(f"LLM usage: {response.usage.prompt_tokens} + {response.usage.completion_tokens} tokens")
+            response.raise_for_status()
             
-            return content
+            if not response.content:
+                raise ValueError("LLM API 返回空响应")
             
-        except Exception as e:
-            logger.error(f"LLM API error: {e}", exc_info=True)
-            raise
+            try:
+                data = response.json()
+            except json.JSONDecodeError as e:
+                logger.error(f"LLM API response not valid JSON: {response.text[:500]}")
+                raise ValueError(f"LLM API 响应格式错误: {response.text[:100]}")
+        
+        if "choices" not in data or not data["choices"]:
+            raise ValueError("LLM API 响应缺少 choices 字段")
+        
+        result = data["choices"][0]["message"]["content"]
+        
+        # End Langfuse generation with output
+        if generation:
+            generation.update(output=result)
+            generation.end()
+        
+        # Log usage
+        if "usage" in data:
+            logger.info(f"[{trace_name}] LLM usage: {data['usage'].get('prompt_tokens', 0)} + {data['usage'].get('completion_tokens', 0)} tokens")
+
+        return result
 
     async def analyze_feature(
         self,
@@ -149,7 +191,6 @@ class LLMClient:
         """Generate integration test code based on feature analysis."""
         system_prompt = TEST_NODEJS_SYSTEM if project_type == "nodejs" else TEST_PYTHON_SYSTEM
 
-        # Build user prompt
         user_prompt = TEST_USER_TEMPLATE.format(
             features_text=features_text,
             execution_plan=execution_plan
