@@ -70,6 +70,23 @@ docker compose up -d --build
 
 ### 1.3 API 调用示例
 
+#### 方式一：Swagger UI（推荐）
+
+FastAPI 自带交互式 API 文档，打开浏览器访问：
+
+```
+http://localhost:8000/docs
+```
+
+在 Swagger UI 中可以直接：
+- 填写 `problem_description`（需求描述）
+- 上传 `code_zip`（代码压缩包）
+- 点击 **Execute** 执行分析
+
+![Swagger UI](docs/images/swagger-ui.png)
+
+#### 方式二：cURL 命令行
+
 ```bash
 # 健康检查
 curl http://localhost:8000/
@@ -80,7 +97,83 @@ curl -X POST http://localhost:8000/api/review \
   -F "code_zip=@your-project.zip"
 ```
 
-### 1.4 常用运维命令
+### 1.4 运行示例
+
+> **⏱️ 分析时长**：与需求复杂度正相关。本 Demo 设置仅分析核心功能点（约 3 个），完整分析可识别 9+ 功能点。
+
+**核心流程**：
+1. **代码解析** → Tree-sitter AST 提取 + 向量化索引
+2. **特性分析** → LLM 并行分析各功能点实现位置
+3. **测试验证** → Docker 沙箱执行 + ReAct 自修复循环（最多 3 次重试）
+
+**可观测性**：通过 [Langfuse](https://cloud.langfuse.com) 追踪 LLM 调用链路和 Token 消耗。
+
+![Langfuse 调用追踪](docs/images/langfuse-trace.png)
+
+**运行日志**（Docker）：
+```bash
+code-analyze-app     | INFO:     127.0.0.1:44824 - "GET / HTTP/1.1" 200 OK
+code-analyze-qdrant  | 2025-12-30T13:30:01.339691Z  INFO actix_web::middleware::logger: 192.168.147.4 "PUT /collections/code_blocks/points?wait=true HTTP/1.1" 200 92 "-" "python-client/1.16.2 python/3.11.14" 0.015538
+code-analyze-app     | INFO:     127.0.0.1:40110 - "GET / HTTP/1.1" 200 OK
+code-analyze-app     | 13:29:43 | ============================================================
+code-analyze-app     | 13:29:43 | 🚀 Starting code analysis...
+code-analyze-app     | 13:29:43 | ============================================================
+code-analyze-app     | 13:29:43 | 📦 [1/5] Extracting ZIP file...
+code-analyze-app     | 13:29:43 |    ✓ Extracted 38 files (0.0s)
+code-analyze-app     | 13:29:43 | 🔍 [2/5] Parsing code structure...
+code-analyze-app     | 13:29:43 |    ✓ Found 65 definitions (0.1s)
+code-analyze-app     | 13:29:43 | 🧮 [3/5] Generating embeddings...
+code-analyze-app     | 13:29:49 | Embedded batch 1, total: 32/65
+code-analyze-app     | 13:29:56 | Embedded batch 2, total: 64/65
+code-analyze-app     | 13:30:00 | Embedded batch 3, total: 65/65
+code-analyze-app     | 13:30:01 |    ✓ Indexed 65 definitions (17.6s)
+code-analyze-app     | 13:30:01 |    ✓ Cached 65 definitions
+code-analyze-app     | 13:30:01 | 🤖 [4/5] Analyzing features with LLM...
+code-analyze-app     | 13:30:01 | Langfuse tracing enabled
+code-analyze-app     | 13:30:01 |       → Extracting features from problem description...
+code-analyze-app     | INFO:     127.0.0.1:38974 - "GET / HTTP/1.1" 200 OK
+code-analyze-app     | 13:30:06 | [extract_features] LLM usage: 336 + 158 tokens
+code-analyze-app     | 13:30:06 | Extracted 3 features: ['实现创建频道功能', '实现在频道中发送消息功能', '实现按降序列出频道消息功能']
+code-analyze-app     | 13:30:06 |       → Found 3 features (5.3s)
+code-analyze-app     | 13:30:06 |       → Analyzing feature implementations (parallel)...
+code-analyze-app     | 13:30:09 | Embedded batch 1, total: 1/1
+code-analyze-app     | 13:30:09 | Embedded batch 1, total: 1/1
+code-analyze-app     | 13:30:09 | Embedded batch 1, total: 1/1
+code-analyze-app     | 13:30:14 | [analyze_feature:实现创建频道功能] LLM usage: 7269 + 157 tokens
+code-analyze-app     | 13:30:15 | [analyze_feature:实现在频道中发送消息功能] LLM usage: 7303 + 352 tokens
+code-analyze-app     | 13:30:15 | [generate_execution_plan] LLM usage: 6767 + 305 tokens
+code-analyze-app     | 13:30:16 | [analyze_feature:实现按降序列出频道消息功能] LLM usage: 7342 + 321 tokens
+code-analyze-app     | 13:30:16 | Analyzed 3 features, 3 have locations
+code-analyze-app     | 13:30:16 |       → 3 features analyzed (10.0s)
+code-analyze-app     | 13:30:16 | 🧪 [5/5] Running functional verification...
+code-analyze-app     | 13:31:20 | [generate_test_code] LLM usage: 2599 + 5424 tokens
+code-analyze-app     | 13:31:20 |       → Writing test file...
+code-analyze-app     | 13:31:20 |       → Creating test runner script...
+code-analyze-app     | 13:31:20 |       → Starting Docker container (node:18-alpine)...
+code-analyze-app     | 13:31:20 |       → Executing tests in container...
+code-analyze-app     | 13:32:55 | Tests failed on attempt 1, using LLM to fix...
+code-analyze-app     | 13:34:39 | [fix_test_code] LLM usage: 1296 + 6871 tokens
+code-analyze-app     | 13:34:39 |       → Writing test file...
+code-analyze-app     | 13:34:39 |       → Creating test runner script...
+code-analyze-app     | 13:34:39 |       → Starting Docker container (node:18-alpine)...
+code-analyze-app     | 13:34:39 |       → Executing tests in container...
+code-analyze-app     | 13:35:34 | Tests failed on attempt 2, using LLM to fix...
+code-analyze-app     | 13:36:49 | [fix_test_code] LLM usage: 1399 + 5291 tokens
+code-analyze-app     | 13:36:49 |       → Writing test file...
+code-analyze-app     | 13:36:49 |       → Creating test runner script...
+code-analyze-app     | 13:36:49 |       → Starting Docker container (node:18-alpine)...
+code-analyze-app     | 13:36:49 |       → Executing tests in container...
+code-analyze-app     | 13:37:42 | Tests passed on attempt 3
+code-analyze-app     | 13:37:42 |       → Tests ✅ PASSED (446.2s)
+code-analyze-app     | 13:37:42 |    ✓ Analysis complete (461.5s)
+code-analyze-app     | 13:37:42 | ============================================================
+code-analyze-app     | 13:37:42 | ✅ Done! Total time: 479.2s
+code-analyze-app     | 13:37:42 | ============================================================
+```
+
+
+
+### 1.5 常用运维命令
 
 ```bash
 docker compose logs -f app      # 查看日志
@@ -336,16 +429,12 @@ make dev
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|:----:|--------|------|
-| `LLM_API_URL` | ✅ | `https://api.openai.com/v1` | LLM API 地址 |
+| `LLM_API_URL` | ✅ | `https://openrouter.ai/api` | LLM API 地址 |
 | `LLM_API_KEY` | ✅ | - | API 密钥 |
-| `LLM_MODEL` | ❌ | `gpt-4o-mini` | 模型名称 |
+| `LLM_MODEL` | ✅ | `openai/gpt-5-codex` | 模型名称 |
 | `EMBEDDING_API_URL` | ❌ | `${LLM_API_URL}` | Embedding API 地址 |
-| `EMBEDDING_DIMENSION` | ❌ | `1536` | 向量维度 |
+| `EMBEDDING_DIMENSION` | ❌ | `1024` | 向量维度 |
 | `LANGFUSE_PUBLIC_KEY` | ❌ | - | Langfuse 公钥 |
 | `LANGFUSE_SECRET_KEY` | ❌ | - | Langfuse 私钥 |
 
 ---
-
-## 📝 License
-
-MIT
