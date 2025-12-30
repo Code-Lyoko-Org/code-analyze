@@ -1,74 +1,64 @@
 version: '3.8'
 
 services:
+  # Main API service
   app:
     build: .
+    container_name: code-analyze-app
     ports:
       - "8000:8000"
     environment:
-      - LLM_API_URL=${LLM_API_URL:-https://x666.me}
+      # LLM Configuration (OpenAI)
       - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-gemini-2.5-pro}
-      - EMBEDDING_API_URL=http://ollama:11434
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text:latest}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-768}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      # Embedding Configuration (OpenAI)
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-${LLM_API_KEY}}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-1536}
+      # Internal services
       - QDRANT_HOST=qdrant
       - QDRANT_PORT=6333
       - REDIS_URL=redis://redis:6379/0
       - TEMP_DIR=/tmp/code-analyze
+      # Langfuse (optional)
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-}
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-}
       - LANGFUSE_HOST=${LANGFUSE_HOST:-https://cloud.langfuse.com}
     volumes:
       - temp_data:/tmp/code-analyze
-      - /var/run/docker.sock:/var/run/docker.sock # For Docker-in-Docker execution
+      - /var/run/docker.sock:/var/run/docker.sock # For test execution
     depends_on:
-      - redis
-      - qdrant
-      - ollama
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-  celery:
-    build: .
-    command: celery -A app.celery_app worker -l info -c 4
-    environment:
-      - LLM_API_URL=${LLM_API_URL:-https://x666.me}
-      - LLM_API_KEY=${LLM_API_KEY}
-      - LLM_MODEL=${LLM_MODEL:-gemini-2.5-pro}
-      - EMBEDDING_API_URL=http://ollama:11434
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text:latest}
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - REDIS_URL=redis://redis:6379/0
-      - TEMP_DIR=/tmp/code-analyze
-    volumes:
-      - temp_data:/tmp/code-analyze
-    depends_on:
-      - redis
-      - qdrant
-      - ollama
-    restart: unless-stopped
-
-  ollama:
-    image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    restart: unless-stopped
-    # Pull nomic-embed-text model on first run:
-    # docker exec -it code-analyze-ollama-1 ollama pull nomic-embed-text
-
+  # Redis for caching
   redis:
     image: redis:7-alpine
+    container_name: code-analyze-redis
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
+  # Qdrant vector database
   qdrant:
     image: qdrant/qdrant:latest
+    container_name: code-analyze-qdrant
     ports:
       - "6333:6333"
     volumes:
@@ -79,6 +69,3 @@ volumes:
   temp_data:
   redis_data:
   qdrant_data:
-  ollama_data:
-
-
