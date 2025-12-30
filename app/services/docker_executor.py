@@ -55,9 +55,13 @@ class DockerExecutor:
         """
         try:
             if project_type == "nodejs":
-                return await self._execute_nodejs_tests(project_path, test_code, timeout)
+                return await self._execute_nodejs_tests(
+                    project_path, test_code, timeout
+                )
             else:
-                return await self._execute_python_tests(project_path, test_code, timeout)
+                return await self._execute_python_tests(
+                    project_path, test_code, timeout
+                )
         except asyncio.TimeoutError:
             logger.error(f"Test execution timed out after {timeout} seconds")
             return ExecutionResult(
@@ -82,17 +86,19 @@ class DockerExecutor:
         
         # Use port 3000 inside the isolated container (no conflicts)
         port = 3000
+        test_file = "generated_test.spec.js"
         
         # Normalize port references in test code to use localhost:3000
         test_code = test_code.replace("localhost:3001", f"localhost:{port}")
         test_code = test_code.replace("localhost:3002", f"localhost:{port}")
         
         # Write test file to project
-        test_file_path = Path(project_path) / "generated_test.spec.js"
+        logger.info("      → Writing test file...")
+        test_file_path = Path(project_path) / test_file
         test_file_path.write_text(test_code)
-        logger.info(f"Written test file to {test_file_path}")
         
         # Create test runner script from template
+        logger.info("      → Creating test runner script...")
         run_script = NODEJS_TEST_SCRIPT.format(port=port)
         
         run_script_path = Path(project_path) / "run_tests.sh"
@@ -100,6 +106,7 @@ class DockerExecutor:
         run_script_path.chmod(0o755)
         
         # Run Docker container (isolated network, no --network host)
+        logger.info("      → Starting Docker container (node:18-alpine)...")
         docker_cmd = [
             "docker", "run",
             "--rm",
@@ -110,7 +117,7 @@ class DockerExecutor:
             "/bin/sh", "-c", "apk add --no-cache bash curl > /dev/null 2>&1 && bash /app/run_tests.sh"
         ]
         
-        logger.info(f"Running Docker command: {' '.join(docker_cmd[:6])}...")
+        logger.info("      → Executing tests in container...")
         return await self._run_docker_command(docker_cmd, timeout, container_name)
 
     async def _execute_python_tests(
@@ -124,21 +131,25 @@ class DockerExecutor:
         
         # Use port 8000 inside the isolated container
         port = 8000
+        test_file = "generated_test.py"
         
         # Normalize port references
         test_code = test_code.replace("localhost:8001", f"localhost:{port}")
         
         # Write test file to project
-        test_file_path = Path(project_path) / "generated_test.py"
+        logger.info("      → Writing test file...")
+        test_file_path = Path(project_path) / test_file
         test_file_path.write_text(test_code)
         
         # Create test runner script from template
+        logger.info("      → Creating test runner script...")
         run_script = PYTHON_TEST_SCRIPT.format(port=port)
         
         run_script_path = Path(project_path) / "run_tests.sh"
         run_script_path.write_text(run_script)
         run_script_path.chmod(0o755)
         
+        logger.info("      → Starting Docker container (python:3.11-slim)...")
         docker_cmd = [
             "docker", "run",
             "--rm",
@@ -149,6 +160,7 @@ class DockerExecutor:
             "/bin/bash", "-c", "apt-get update > /dev/null && apt-get install -y curl > /dev/null && bash /app/run_tests.sh"
         ]
         
+        logger.info("      → Executing tests in container...")
         return await self._run_docker_command(docker_cmd, timeout, container_name)
 
     async def _run_docker_command(
