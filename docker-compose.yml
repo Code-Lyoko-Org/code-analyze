@@ -67,5 +67,6 @@ services:
 
 volumes:
   temp_data:
+    name: code-analyze_temp_data # Fixed name, independent of folder name
   redis_data:
   qdrant_data:
